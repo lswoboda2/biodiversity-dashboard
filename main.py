@@ -11,15 +11,14 @@ from pathlib import Path
 
 app = FastAPI(title="Biodiversity Dashboard", version="1.0.0")
 
-# --- Configure allowed origins (WordPress site) ---
-# IMPORTANT: Replace the URL below if your site domain changes.
-ALLOWED_ORIGINS = [
-    "https://biodiversity.wp.st-andrews.ac.uk",
+# Define the list of allowed origins (your frontend)
+origins = [
+    "https://biodiversitydashboard-ls.netlify.app",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,     # safer than ["*"]
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
