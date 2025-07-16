@@ -3,5 +3,4 @@ uvicorn
 pandas
 numpy
 scipy
-python-parquet
 pyarrow
