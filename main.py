@@ -22,6 +22,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.head("/")
+def read_root_head():
+    return Response(status_code=200)
+
 DATA_PATH = Path(__file__).parent / "alldata_cleaned.parquet"
 df = None  
 
@@ -70,14 +74,9 @@ def apply_filters(
         query_df = query_df[query_df["month"] == int(month)]
     return query_df
 
-@app.get("/")
-def read_root():
-    return {"status": "ok"}
 
 def _get_options(df_source: pd.DataFrame, key_name: str):
     return sorted(df_source[key_name].dropna().unique().tolist())
-
-
 
 @app.get("/")
 def root():
