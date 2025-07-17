@@ -1,4 +1,3 @@
-# main.py
 import os
 import sys
 import pandas as pd
@@ -11,22 +10,20 @@ from pathlib import Path
 
 app = FastAPI(title="Biodiversity Dashboard", version="1.0.0")
 
-# --- Configure allowed origins (WordPress site) ---
-# IMPORTANT: Replace the URL below if your site domain changes.
-ALLOWED_ORIGINS = [
-    "https://biodiversity.wp.st-andrews.ac.uk",
+origins = [
+    "https://biodiversitydashboard-ls.netlify.app",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,     # safer than ["*"]
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 DATA_PATH = Path(__file__).parent / "alldata_cleaned.parquet"
-df = None  # global frame
+df = None  
 
 
 def load_data() -> pd.DataFrame:
@@ -47,11 +44,9 @@ def load_data() -> pd.DataFrame:
 try:
     df = load_data()
 except Exception as e:
-    # Fail fast so Render build shows the error in logs.
     raise RuntimeError(f"Failed to load dataset: {e}") from e
 
 
-# --- Filtering helper ---------------------------------------------------------
 def apply_filters(
     query_df: pd.DataFrame,
     english_name: Optional[str] = None,
@@ -75,13 +70,14 @@ def apply_filters(
         query_df = query_df[query_df["month"] == int(month)]
     return query_df
 
+@app.get("/")
+def read_root():
+    return {"status": "ok"}
 
-# --- Utility: safe option generator -------------------------------------------
 def _get_options(df_source: pd.DataFrame, key_name: str):
     return sorted(df_source[key_name].dropna().unique().tolist())
 
 
-# --- Routes -------------------------------------------------------------------
 
 @app.get("/")
 def root():
@@ -90,7 +86,6 @@ def root():
 
 @app.get("/health")
 def health():
-    # quick health endpoint to verify running container
     return {"ok": True}
 
 
