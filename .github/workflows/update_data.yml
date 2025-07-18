@@ -35,7 +35,7 @@ jobs:
         run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
 
       - name: Download .gpkg file from Google Drive
-        run: gdown --service-account gdrive-credentials.json ${{ github.event.client_payload.file_id }} -O data.gpkg
+        run: gdown --service-account-json gdrive-credentials.json ${{ github.event.client_payload.file_id }} -O data.gpkg
       
       - name: Run data conversion script
         run: python streamlinedfileconversion.py data.gpkg
