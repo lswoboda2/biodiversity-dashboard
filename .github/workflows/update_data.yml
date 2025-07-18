@@ -30,12 +30,14 @@ jobs:
           pip install --upgrade pip
           pip install --upgrade "gdown>=4.7.0"
           pip install -r requirements.txt
+      - name: Install Google API Python Client
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
 
       - name: Authenticate to Google Drive
         run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
 
-      - name: Download .gpkg file from Google Drive
-        run: gdown --service-account-json gdrive-credentials.json ${{ github.event.client_payload.file_id }} -O data.gpkg
+      - name: Download .gpkg file from Google Drive (service account)
+        run: python download_from_gdrive.py "${{ github.event.client_payload.file_id }}" "data.gpkg"
       
       - name: Run data conversion script
         run: python streamlinedfileconversion.py data.gpkg
