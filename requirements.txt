@@ -4,3 +4,6 @@ pandas
 numpy
 scipy
 pyarrow
+geopandas
+requests
+gdown
