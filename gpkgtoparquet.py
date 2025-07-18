@@ -19,7 +19,7 @@ LAYER_NAME = 'All data 2025-26'
 
 SPECIES_CSV_PATH = 'species list.csv'
 
-OUTPUT_PARQUET_PATH = 'streamlined_data.parquet'
+OUTPUT_PARQUET_PATH = 'alldata_cleaned.parquet'
 
 def get_name_from_itis(species_name: str) -> str | None:
     """Looks up a name from the Integrated Taxonomic Information System (ITIS)."""

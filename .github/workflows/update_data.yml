@@ -1,44 +1,60 @@
+# The name of the automated workflow, which you'll see in the "Actions" tab on GitHub.
 name: Update Parquet Data from Google Drive
 
+# This section defines the trigger. It's now set to listen for an external API call.
 on:
-  workflow_dispatch:
-    inputs:
-      gpkg_file_id:
-        description: 'Google Drive File ID of the .gpkg file'
-        required: true
+  repository_dispatch:
+    # We can specify a 'type' of event to listen for, so other events don't trigger it by mistake.
+    types: [new-gpkg-file]
 
+# This defines the "job" or the set of tasks the automation will perform.
 jobs:
   build-and-commit:
+    # This specifies the type of virtual computer to run the job on. 'ubuntu-latest' is standard and reliable.
     runs-on: ubuntu-latest
+
+    # These are the individual steps the virtual computer will execute in order.
     steps:
-      - name: Step 1 - Get a copy of the project code
+      # Step 1: Checks out a copy of your repository's code onto the virtual machine.
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Step 2 - Set up Python environment
+      # Step 2: Installs the Python language.
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.11' # You can change this version if needed.
 
-      - name: Step 3 - Install system dependencies for GeoPandas
+      # Step 3: Installs system-level libraries needed by GeoPandas. This is a crucial step.
+      - name: Install GDAL and other dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gdal-bin libgdal-dev
 
-      - name: Step 4 - Install Python packages from our list
+      # Step 4: Installs all the Python packages listed in your requirements.txt file.
+      - name: Install Python packages
         run: pip install -r requirements.txt
 
-      - name: Step 5 - Download the new .gpkg file from Google Drive
-        run: gdown --service-account-file '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' --id ${{ inputs.gpkg_file_id }} -O data.gpkg
+      # Step 5: Downloads the .gpkg file from Google Drive using the File ID sent by the trigger.
+      - name: Download .gpkg file from Google Drive
+        run: gdown --service-account-file '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' --id ${{ github.event.client_payload.file_id }} -O data.gpkg
 
-      - name: Step 6 - Run the conversion script
+      # Step 6: Runs your conversion script, telling it to use the 'data.gpkg' file we just downloaded.
+      - name: Run data conversion script
         run: python streamlinedfileconversion.py data.gpkg
 
-      - name: Step 7 - Save the new Parquet file to the project
+      # Step 7: Commits the newly generated .parquet file back to your repository.
+      - name: Commit and push if there are changes
         run: |
-          git config user.name 'GitHub Actions'
-          git config user.email 'actions@github.com'
+          # Configure git with a generic user name and email for this action.
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add the new parquet file to the staging area for commit.
+          # Make sure 'streamlined_data.parquet' matches the OUTPUT_PARQUET_PATH in your script.
           git add streamlined_data.parquet
-          # The commit command below saves the changes with a message
-          git commit -m "Chore: Update Parquet data" || echo "No changes to commit"
-          # The push command sends the new file up to GitHub
-          git push || echo "No changes to push"
+          
+          # Commit the file with a message, and push the change back to your repository's main branch.
+          # The '|| true' part prevents the workflow from failing if there are no changes to commit.
+          git commit -m "Chore: Update Parquet data file" || true
+          git push || true
