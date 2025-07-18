@@ -1,60 +1,60 @@
-# The name of the automated workflow, which you'll see in the "Actions" tab on GitHub.
 name: Update Parquet Data from Google Drive
 
-# This section defines the trigger. It's now set to listen for an external API call.
 on:
   repository_dispatch:
-    # We can specify a 'type' of event to listen for, so other events don't trigger it by mistake.
     types: [new-gpkg-file]
 
-# This defines the "job" or the set of tasks the automation will perform.
 jobs:
   build-and-commit:
-    # This specifies the type of virtual computer to run the job on. 'ubuntu-latest' is standard and reliable.
     runs-on: ubuntu-latest
 
-    # These are the individual steps the virtual computer will execute in order.
+    # This is crucial: it grants the workflow permission to write the new file back to your repository.
+    permissions:
+      contents: write
+
     steps:
-      # Step 1: Checks out a copy of your repository's code onto the virtual machine.
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Step 2: Installs the Python language.
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # You can change this version if needed.
+          python-version: '3.11'
 
-      # Step 3: Installs system-level libraries needed by GeoPandas. This is a crucial step.
       - name: Install GDAL and other dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y gdal-bin libgdal-dev
 
-      # Step 4: Installs all the Python packages listed in your requirements.txt file.
       - name: Install Python packages
         run: pip install -r requirements.txt
 
-      # Step 5: Downloads the .gpkg file from Google Drive using the File ID sent by the trigger.
-      - name: Download .gpkg file from Google Drive
-        run: gdown --service-account-file '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' --id ${{ github.event.client_payload.file_id }} -O data.gpkg
+      # --- THIS IS THE CORRECTED SECTION ---
+      - name: Authenticate to Google Drive
+        # This step creates a temporary credentials file from your GitHub Secret.
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
 
-      # Step 6: Runs your conversion script, telling it to use the 'data.gpkg' file we just downloaded.
+      - name: Download .gpkg file from Google Drive
+        # This step now correctly uses the credentials file to authenticate and download.
+        run: gdown --auth gdrive-credentials.json ${{ github.event.client_payload.file_id }} -O data.gpkg
+      # --- END OF CORRECTION ---
+
       - name: Run data conversion script
+        # This runs your actual, complex script on the downloaded file.
         run: python streamlinedfileconversion.py data.gpkg
 
-      # Step 7: Commits the newly generated .parquet file back to your repository.
       - name: Commit and push if there are changes
         run: |
-          # Configure git with a generic user name and email for this action.
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
-          # Add the new parquet file to the staging area for commit.
-          # Make sure 'streamlined_data.parquet' matches the OUTPUT_PARQUET_PATH in your script.
-          git add streamlined_data.parquet
+          # This now correctly looks for 'alldata_cleaned.parquet' to commit.
+          git add alldata_cleaned.parquet
           
-          # Commit the file with a message, and push the change back to your repository's main branch.
-          # The '|| true' part prevents the workflow from failing if there are no changes to commit.
-          git commit -m "Chore: Update Parquet data file" || true
-          git push || true
+          # This checks if there are changes and pushes them to your repository.
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Chore: Update Parquet data file"
+            git push
+          fi
