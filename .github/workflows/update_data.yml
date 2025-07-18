@@ -8,7 +8,6 @@ jobs:
   build-and-commit:
     runs-on: ubuntu-latest
 
-    # This is crucial: it grants the workflow permission to write the new file back to your repository.
     permissions:
       contents: write
 
@@ -27,31 +26,27 @@ jobs:
           sudo apt-get install -y gdal-bin libgdal-dev
 
       - name: Install Python packages
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          # --- THIS IS THE NEW FIX ---
+          # Force an upgrade of gdown to the latest version
+          pip install --upgrade gdown
 
-      # --- THIS IS THE CORRECTED SECTION ---
       - name: Authenticate to Google Drive
-        # This step creates a temporary credentials file from your GitHub Secret.
         run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
 
       - name: Download .gpkg file from Google Drive
-        # This step now correctly uses the credentials file to authenticate and download.
+        # This command will now work because we upgraded gdown in the previous step
         run: gdown --auth gdrive-credentials.json ${{ github.event.client_payload.file_id }} -O data.gpkg
-      # --- END OF CORRECTION ---
-
+      
       - name: Run data conversion script
-        # This runs your actual, complex script on the downloaded file.
         run: python streamlinedfileconversion.py data.gpkg
 
       - name: Commit and push if there are changes
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          
-          # This now correctly looks for 'alldata_cleaned.parquet' to commit.
           git add alldata_cleaned.parquet
-          
-          # This checks if there are changes and pushes them to your repository.
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
