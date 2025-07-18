@@ -28,7 +28,7 @@ jobs:
       - name: Install Python packages
         run: |
           pip install --upgrade pip
-          pip install --upgrade gdown>=4.7.0
+          pip install --upgrade "gdown>=4.7.0"
           pip install -r requirements.txt
 
       - name: Authenticate to Google Drive
