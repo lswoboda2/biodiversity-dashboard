@@ -28,7 +28,7 @@ def read_root_head():
     return Response(status_code=200)
 
 try:
-    df = pd.read_parquet('streamlined_data.parquet')
+    df = pd.read_parquet('alldata_cleaned.parquet')
     df['Date'] = pd.to_datetime(df['Date'])
     df['year'] = df['Date'].dt.year
     df['month'] = df['Date'].dt.month
