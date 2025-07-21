@@ -33,54 +33,28 @@
             background-color: #fff; padding: 1.5em; border-radius: 8px;
             box-shadow: var(--card-shadow); margin-bottom: 1.5em;
         }
-        .chart-card { overflow: hidden; }
+        .chart-card {
+            min-height: 500px;
+            overflow: hidden;
+        }
         .stat-card { text-align: center; }
         .stat-card h4 { margin: 0 0 0.5em 0; color: var(--secondary-color); font-weight: normal; }
         .stat-card p { margin: 0; font-size: 2em; font-weight: bold; color: var(--primary-color); }
-        .table-wrapper { width: 100%; overflow-x: auto; padding: 1.5em; }
+        .table-wrapper { width: 100%; overflow-x: auto; }
         table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
         th, td { border: 1px solid var(--border-color); padding: 10px; text-align: left; }
         th { background-color: var(--light-gray); }
-        td.wrap-text { white-space: normal; word-break: break-word; max-width: 250px; }
+        td.wrap-text {
+            white-space: normal; word-break: break-word; max-width: 250px;
+        }
         button { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; }
-        .pagination { display: flex; justify-content: center; align-items: center; gap: 1em; padding: 0 1.5em 1.5em 1.5em; }
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 1em; padding-top: 1em; }
         .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.7); display: flex; justify-content: center; align-items: center; z-index: 10; font-style: italic; color: #666; }
         .error-message { text-align: center; color: var(--error-color); padding: 2em; }
-        
-        .card-title {
-            font-weight: 600;
-            color: #333;
-        }
-        .card-header-collapsible {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            cursor: pointer;
-            padding: 1em 1.5em;
-            background-color: var(--light-gray);
-            border-bottom: 1px solid var(--border-color);
-        }
-        .card-header-collapsible .icon {
-            font-weight: bold;
-            font-size: 1.2em;
-            color: var(--secondary-color);
-        }
-        .card-content-collapsible {
-            max-height: 10000px;
-            overflow: hidden;
-            transition: max-height 0.5s ease-in-out;
-            visibility: visible;
-        }
-        .card-content-collapsible.collapsed {
-            max-height: 0;
-            visibility: hidden;
-            border-top: none; 
-        }
     </style>
 </head>
 <body>
     <h1>Biodiversity Dashboard</h1>
-
     <div class="filter-bar">
         <div class="filter-group"><label for="english_name-filter">English Name</label><select id="english_name-filter" class="filter-select" multiple="multiple"></select></div>
         <div class="filter-group"><label for="species-filter">Scientific Name</label><select id="species-filter" class="filter-select" multiple="multiple"></select></div>
@@ -90,7 +64,6 @@
         <div class="filter-group"><label for="year-filter">Year</label><select id="year-filter" class="filter-select-single"></select></div>
         <div><button id="clear-filters" style="background-color: var(--secondary-color);">Clear Filters</button></div>
     </div>
-
     <h2>Dashboard Summary</h2>
     <div class="stats-grid">
         <div class="stat-card"><h4>Total Records</h4><p id="total-records">...</p></div>
@@ -98,31 +71,12 @@
         <div class="stat-card"><h4>Shannon Index (H')</h4><p id="shannon-index">...</p></div>
         <div class="stat-card"><h4>Gini-Simpson Index (1-D)</h4><p id="simpson-index">...</p></div>
     </div>
-    
-    <h2>Complete Species List</h2>
-    <div class="card" style="padding: 0; position: relative; margin-top: 0;">
-        <div class="card-header-collapsible" id="species-list-toggle">
-            <span class="card-title">Toggle List View</span>
-            <span class="icon">[-]</span>
-        </div>
-        <div class="card-content-collapsible">
-             <div class="table-wrapper">
-                <table id="unique-species-table">
-                    <thead><tr><th>Scientific Name</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
-            <div class="pagination" id="unique-species-pagination"></div>
-        </div>
-    </div>
-
     <h2>Analytics</h2>
     <div class="card chart-card" id="species-dist-container" style="position: relative;"></div>
     <div class="card chart-card" id="temporal-chart-container" style="position: relative;"></div>
     <div class="card chart-card" id="observer-chart-container" style="position: relative;"></div>
-
     <h2>Data Records</h2>
-    <div class="card" style="padding: 0; position: relative;">
+    <div class="card" style="position: relative;">
         <div class="table-wrapper">
             <table id="records-table"><thead><tr><th>English Name</th><th>Scientific Name</th><th>Observer</th><th>Date</th><th>Count</th><th>Taxa</th><th>Latitude</th><th>Longitude</th></tr></thead><tbody></tbody></table>
         </div>
@@ -139,10 +93,7 @@ $(document).ready(function() {
     function initializeDashboard() {
         $('.filter-select').select2({ width: '100%', placeholder: 'All', allowClear: true });
         $('.filter-select-single').select2({ width: '100%', placeholder: 'All', allowClear: true });
-        
         updateFilterOptions().then(updateAllDashboardComponents);
-        loadUniqueSpeciesTable(1); 
-        
         $('#clear-filters').on('click', clearFilters);
         $('.filter-select, .filter-select-single').on('change', () => {
             if (!isUpdatingFilters) {
@@ -151,50 +102,8 @@ $(document).ready(function() {
                 }, 300);
             }
         });
-
-        $('#species-list-toggle').on('click', function() {
-            const content = $(this).next('.card-content-collapsible');
-            const icon = $(this).find('.icon');
-            
-            content.toggleClass('collapsed');
-            
-            if (content.hasClass('collapsed')) {
-                icon.text('[+]');
-            } else {
-                icon.text('[-]');
-            }
-        });
     }
 
-    function loadUniqueSpeciesTable(page = 1) {
-        const card = $('#unique-species-table').closest('.card');
-        card.append('<div class="loading-overlay"><span>Loading...</span></div>');
-
-        return $.get(`${API_BASE_URL}/api/all_unique_species`, { page: page, page_size: 10 }).done(data => {
-            const tableBody = $('#unique-species-table tbody').empty();
-            if (!data.species_list || data.species_list.length === 0) {
-                tableBody.append('<tr><td style="text-align:center; padding: 2em;">No species found.</td></tr>');
-            } else {
-                data.species_list.forEach(speciesName => {
-                    tableBody.append(`<tr><td><em>${speciesName}</em></td></tr>`);
-                });
-            }
-            updateUniqueSpeciesPagination(data.total_pages, data.page);
-        }).fail(() => {
-            showErrorMessage('#unique-species-table tbody', 'Could not load the species list.');
-        }).always(() => {
-            card.find('.loading-overlay').remove();
-        });
-    }
-
-    function updateUniqueSpeciesPagination(totalPages, page) {
-        const container = $('#unique-species-pagination').empty();
-        if (totalPages <= 1) return;
-        const prevButton = $('<button>&laquo; Previous</button>').on('click', () => loadUniqueSpeciesTable(page - 1)).prop('disabled', page === 1);
-        const nextButton = $('<button>Next &raquo;</button>').on('click', () => loadUniqueSpeciesTable(page + 1)).prop('disabled', page === totalPages);
-        container.append(prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton);
-    }
-    
     function updateAllDashboardComponents() {
         const filters = getActiveFilters();
         setLoadingState(true);
@@ -210,9 +119,8 @@ $(document).ready(function() {
 
     function setLoadingState(isLoading) {
         $('.error-message').remove();
-        const mainCards = $('.card:visible').not('#unique-species-table .card'); 
         if (isLoading) {
-            mainCards.append('<div class="loading-overlay"><span>Loading...</span></div>');
+            $('.card:visible').append('<div class="loading-overlay"><span>Loading...</span></div>');
         } else {
             $('.loading-overlay').remove();
         }
@@ -306,94 +214,28 @@ $(document).ready(function() {
     }
 
     function drawAndResizeChart(divId, data, layout, config) {
-        Plotly.newPlot(divId, data, layout, config);
+        Plotly.newPlot(divId, data, layout, config).then(() => {
+            setTimeout(() => { 
+                const anElement = document.getElementById(divId);
+                if (anElement) Plotly.Plots.resize(anElement); 
+            }, 50);
+        });
     }
 
     function updateSpeciesDistributionChart(filters) {
         const container = $('#species-dist-container');
         return $.get(`${API_BASE_URL}/api/summary/species_distribution`, filters).done(data => {
-            if (!data || data.length === 0) {
-                container.closest('.card').hide();
-                return;
-            }
+            if (Object.keys(data).length === 0) { container.closest('.card').hide(); return; }
             container.closest('.card').show();
             container.empty();
-    
-            const sortedData = data.slice().reverse(); 
-            const speciesNames = sortedData.map(d => d.name);
-            const chartHeight = 150 + (speciesNames.length * 35);
-
-            // =================================================================
-            // START OF FIX
-            // This new line sets the container's height to fix the overlap
-            container.height(chartHeight);
-            // END OF FIX
-            // =================================================================
-    
-            const dataByTaxa = {};
-            sortedData.forEach(d => {
-                if (!dataByTaxa[d.taxa]) {
-                    dataByTaxa[d.taxa] = [];
-                }
-                dataByTaxa[d.taxa].push(d);
-            });
-    
-            const traces = Object.keys(dataByTaxa).map(taxaName => {
-                const x_values = speciesNames.map(name => {
-                    const found = dataByTaxa[taxaName].find(d => d.name === name);
-                    return found ? found.count : null;
-                });
-                
-                return {
-                    name: taxaName,
-                    type: 'bar',
-                    orientation: 'h',
-                    y: speciesNames,
-                    x: x_values,
-                    hovertemplate: '%{y}: %{x}<extra></extra>' 
-                };
-            });
-    
-            const layout = {
-                title: {
-                    text: '<b>Top 20 Species by Observation Records</b>',
-                    font: { size: 20 } 
-                },
-                barmode: 'stack',
-                height: chartHeight,
-                margin: {
-                    t: 100, 
-                    b: 80,  
-                    l: 240, 
-                    r: 50   
-                },
-                yaxis: {
-                    automargin: true,
-                    tickfont: { size: 14 } 
-                },
-                xaxis: {
-                    title: {
-                        text: 'Number of Records',
-                        font: { size: 16 }
-                    }
-                },
-                legend: {
-                    orientation: 'h',
-                    yanchor: 'bottom',
-                    y: 1.02,
-                    xanchor: 'right',
-                    x: 1
-                }
-            };
-    
-            drawAndResizeChart('species-dist-container', traces, layout, plotlyConfig);
+            const trace = [{ y: Object.keys(data).reverse(), x: Object.values(data).reverse(), type: 'bar', orientation: 'h' }];
+            const layout = { title: 'Top 20 Species by Record Count', margin: { t: 50, b: 40, l: 200, r: 20 }, yaxis: { automargin: true } };
+            drawAndResizeChart('species-dist-container', trace, layout, plotlyConfig);
         }).fail(() => showErrorMessage('#species-dist-container', 'Could not load Species Distribution chart.'));
     }
 
     function updateTemporalChart(filters) {
         const container = $('#temporal-chart-container');
-        // Setting an explicit height on the container solves any remaining overlap issues
-        container.height(500); 
         return $.get(`${API_BASE_URL}/api/summary/temporal_trends`, filters).done(data => {
             if (Object.keys(data).length === 0) { container.closest('.card').hide(); return; }
             container.closest('.card').show();
@@ -414,64 +256,39 @@ $(document).ready(function() {
 
         if (observers.length === 0) {
             container.closest('.card').hide();
-            return $.when(); 
+            return $.when();
         }
 
         container.closest('.card').show();
         container.empty();
-        // Give the container an explicit height
-        container.height(500);
 
+        // --- Logic for 1 Observer (PIE CHART) ---
         if (observers.length === 1) {
             const observerName = observers[0];
             const { obs, ...otherFilters } = filters;
             return $.get(`${API_BASE_URL}/api/summary/observer/${encodeURIComponent(observerName)}`, otherFilters)
                 .done(data => {
-                    if (!data || !data.specialization || Object.keys(data.specialization).length === 0) {
+                    if (!data || Object.keys(data).length === 0) {
                         container.closest('.card').hide();
                         return;
                     }
-
-                    const chartData = data.specialization;
-                    const otherBreakdown = data.other_breakdown || {};
-                    const labels = Object.keys(chartData);
-                    const values = Object.values(chartData);
-                    const total = values.reduce((sum, val) => sum + val, 0);
-                    
-                    const hoverTexts = labels.map((label, i) => {
-                        const value = values[i];
-                        const percent = ((value / total) * 100).toFixed(2);
-                        let hoverText = `<b>${label}</b><br>Count: ${value}<br>${percent}%`;
-                        
-                        if (label === 'Other' && Object.keys(otherBreakdown).length > 0) {
-                            hoverText += '<br><hr><i>Including:</i>';
-                            for (const [key, val] of Object.entries(otherBreakdown)) {
-                                hoverText += `<br>- ${key}: ${val}`;
-                            }
-                        }
-                        return hoverText;
-                    });
-
                     const trace = [{
                         type: 'pie',
-                        labels: labels,
-                        values: values,
+                        values: Object.values(data),
+                        labels: Object.keys(data),
                         hole: .4,
-                        hoverinfo: 'text',
-                        text: hoverTexts,
-                        textinfo: 'none',
+                        textinfo: "label+percent",
                         automargin: true
                     }];
-
                     const layout = { 
-                        title: `Taxonomic Specialization for ${observerName}`,
-                        showlegend: true,
+                        title: `Taxonomic Specialization for ${observerName}`, 
+                        showlegend: false,
                         margin: { t: 50, b: 20, l: 20, r: 20 }
                     };
-                    
                     drawAndResizeChart('observer-chart-container', trace, layout, plotlyConfig);
                 }).fail(() => showErrorMessage('#observer-chart-container', 'Could not load Observer chart.'));
         } 
+        // --- Logic for 2+ Observers (BAR CHART) ---
         else {
             return $.get(`${API_BASE_URL}/api/summary/observer_comparison`, filters)
                 .done(data => {
