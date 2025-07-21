@@ -8,9 +8,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from typing import Optional
 from pathlib import Path
+from math import ceil
 
 app = FastAPI(title="Biodiversity Dashboard", version="1.0.0")
 
+# Production origins from your GitHub version
 origins = [
     "https://biodiversitydashboard-ls.netlify.app",
 ]
@@ -27,9 +29,10 @@ app.add_middleware(
 def read_root_head():
     return Response(status_code=200)
 
+# Production data path from your GitHub version
 DATA_PATH = Path(__file__).parent / "alldata_cleaned.parquet"
-df = None  
-
+df = None
+ALL_UNIQUE_SPECIES = []
 
 def load_data() -> pd.DataFrame:
     """Load and preprocess the dataset."""
@@ -45,12 +48,11 @@ def load_data() -> pd.DataFrame:
         _df = _df.rename(columns={"Taxa": "taxa"})
     return _df
 
-
 try:
     df = load_data()
+    ALL_UNIQUE_SPECIES = sorted(df['species'].dropna().unique().tolist())
 except Exception as e:
     raise RuntimeError(f"Failed to load dataset: {e}") from e
-
 
 def apply_filters(
     query_df: pd.DataFrame,
@@ -75,7 +77,6 @@ def apply_filters(
         query_df = query_df[query_df["month"] == int(month)]
     return query_df
 
-
 def _get_options(df_source: pd.DataFrame, key_name: str):
     return sorted(df_source[key_name].dropna().unique().tolist())
 
@@ -83,11 +84,24 @@ def _get_options(df_source: pd.DataFrame, key_name: str):
 def root():
     return {"status": "ok", "message": "Biodiversity Dashboard API root"}
 
-
 @app.get("/health")
 def health():
     return {"ok": True}
 
+# New endpoint from your local version
+@app.get("/api/all_unique_species")
+def get_all_unique_species(page: int = 1, page_size: int = 10):
+    total_species = len(ALL_UNIQUE_SPECIES)
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    paginated_species = ALL_UNIQUE_SPECIES[start_index:end_index]
+
+    return {
+        "species_list": paginated_species,
+        "total_records": total_species,
+        "page": page,
+        "total_pages": ceil(total_species / page_size)
+    }
 
 @app.get("/api/filter-options")
 def get_filter_options(
@@ -121,7 +135,6 @@ def get_filter_options(
 
     return options
 
-
 @app.get("/api/records")
 def get_records(
     page: int = 1,
@@ -149,7 +162,6 @@ def get_records(
             "records": paginated_data.to_dict(orient="records"),
         }
     )
-
 
 @app.get("/api/summary/diversity")
 def get_diversity_summary(
@@ -179,7 +191,7 @@ def get_diversity_summary(
         "species_richness": int(species_richness),
     }
 
-
+# Updated endpoint from your local version
 @app.get("/api/summary/species_distribution")
 def get_species_distribution(
     english_name: Optional[str] = None,
@@ -190,10 +202,25 @@ def get_species_distribution(
     month: Optional[int] = None,
 ):
     query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month)
-    species_counts = query_df["english_name"].value_counts()
-    top_20 = species_counts.nlargest(20)
-    return top_20.to_dict()
+    if query_df.empty:
+        return []
 
+    species_counts = query_df['english_name'].value_counts()
+    top_20_names = species_counts.nlargest(20).index.tolist()
+
+    top_20_df = query_df[query_df['english_name'].isin(top_20_names)]
+
+    taxa_map = top_20_df.groupby('english_name')['taxa'].first()
+
+    result = []
+    for name in top_20_names:
+        result.append({
+            "name": name,
+            "count": int(species_counts[name]),
+            "taxa": taxa_map.get(name, "Unknown")
+        })
+
+    return result
 
 @app.get("/api/summary/temporal_trends")
 def get_temporal_trends(
@@ -209,7 +236,6 @@ def get_temporal_trends(
         return {}
     summary = query_df.groupby("month").size().reindex(range(1, 13), fill_value=0)
     return summary.to_dict()
-
 
 @app.get("/api/summary/observer_comparison")
 def get_observer_comparison(
@@ -229,7 +255,7 @@ def get_observer_comparison(
     comparison = query_df.groupby(["obs", "taxa"]).size().unstack(fill_value=0)
     return comparison.to_dict(orient="dict")
 
-
+# Updated endpoint from your local version
 @app.get("/api/summary/observer/{observer_name}")
 def get_observer_stats(
     observer_name: str,
@@ -241,7 +267,24 @@ def get_observer_stats(
 ):
     query_df = apply_filters(df.copy(), english_name, species, None, taxa, year, month)
     observer_df = query_df[query_df["obs"] == observer_name]
+
     if observer_df.empty:
         return {}
-    specialization = observer_df.groupby("taxa").size()
-    return specialization.to_dict()
+
+    specialization = observer_df.groupby('taxa').size().sort_values(ascending=False)
+    other_breakdown = {}
+
+    if len(specialization) > 20:
+        top_20 = specialization.head(20)
+        other_taxa = specialization.tail(-20)
+        other_sum = other_taxa.sum()
+
+        if other_sum > 0:
+            other_breakdown = other_taxa.to_dict()
+            other_series = pd.Series([other_sum], index=['Other'])
+            specialization = pd.concat([top_20, other_series])
+
+    return {
+        "specialization": specialization.to_dict(),
+        "other_breakdown": other_breakdown
+    }
