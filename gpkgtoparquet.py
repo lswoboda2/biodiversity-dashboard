@@ -6,7 +6,7 @@ import time
 import re
 import os
 import sys
-import fiona  
+import fiona
 
 if len(sys.argv) > 1:
     INPUT_GPKG_PATH = sys.argv[1]
@@ -15,9 +15,9 @@ else:
     print("Error: Please provide the path to the .gpkg file.")
     sys.exit(1)
 
-
 SPECIES_CSV_PATH = 'species list.csv'
-OUTPUT_PARQUET_PATH = 'data.parquet'  
+API_CACHE_PATH = 'species_api_cache.csv'  
+OUTPUT_PARQUET_PATH = 'data.parquet'
 
 def find_best_layer(gpkg_path: str) -> str | None:
     """
@@ -145,21 +145,17 @@ def get_best_english_name(species_name: str) -> str | None:
 
 def main():
     """Main function to execute the full data processing pipeline."""
-
     layer_to_load = find_best_layer(INPUT_GPKG_PATH)
     if layer_to_load is None:
         print("Stopping process as no suitable data layer could be found in the GPKG file.")
-        return  
+        return
 
     print("\nLoading and Cleaning GeoPackage Data")
     try:
-        if not os.path.exists(INPUT_GPKG_PATH):
-            raise FileNotFoundError(f"GeoPackage file not found at: {INPUT_GPKG_PATH}")
         gdf = gpd.read_file(INPUT_GPKG_PATH, layer=layer_to_load)
         print(f"Read {len(gdf)} rows from layer '{layer_to_load}'.")
     except Exception as e:
-        print(f"ERROR: Could not read the GeoPackage file. Please check the path and layer name.")
-        print(f"   Details: {e}")
+        print(f"ERROR: Could not read the GeoPackage file. Details: {e}")
         return
 
     gdf['Date'] = pd.to_datetime(gdf['Date'], errors='coerce')
@@ -188,45 +184,56 @@ def main():
 
     print("\nAdding English Species Names")
 
+    final_species_map = {}
     try:
-        if not os.path.exists(SPECIES_CSV_PATH):
-            raise FileNotFoundError(f"Species CSV file not found at: {SPECIES_CSV_PATH}")
-        species_df = pd.read_csv(SPECIES_CSV_PATH, encoding='latin-1')
-        species_df.dropna(subset=['species'], inplace=True)
-        csv_map = pd.Series(species_df.english_name.values, index=species_df.species).to_dict()
-        print(f"Loaded species map from '{SPECIES_CSV_PATH}' ({len(csv_map)} entries).")
+        if os.path.exists(SPECIES_CSV_PATH):
+            species_df = pd.read_csv(SPECIES_CSV_PATH, encoding='latin-1')
+            species_df.dropna(subset=['species'], inplace=True)
+            final_species_map = pd.Series(species_df.english_name.values, index=species_df.species).to_dict()
+            print(f"Loaded {len(final_species_map)} entries from manual list '{SPECIES_CSV_PATH}'.")
+        else:
+            print(f"Warning: Manual species file not found at '{SPECIES_CSV_PATH}'.")
     except Exception as e:
-        print(f"ERROR: Could not read the species CSV file. Please check the file path and format.")
-        print(f"   Details: {e}")
+        print(f"ERROR: Could not read the species CSV file. Details: {e}")
         return
+
+    try:
+        if os.path.exists(API_CACHE_PATH):
+            cache_df = pd.read_csv(API_CACHE_PATH, encoding='latin-1')
+            cache_df.dropna(subset=['species'], inplace=True)
+            cache_map = pd.Series(cache_df.english_name.values, index=cache_df.species).to_dict()
+            
+            original_map_size = len(final_species_map)
+            for species, name in cache_map.items():
+                if species not in final_species_map:
+                    final_species_map[species] = name
+            print(f"Loaded {len(final_species_map) - original_map_size} new entries from cache '{API_CACHE_PATH}'.")
+    except Exception as e:
+        print(f"Warning: Could not read API cache file. It might be created on this run. Details: {e}")
 
     if 'species' not in gdf.columns:
         print(f"ERROR: The main data is missing the required 'species' column.")
         return
 
     all_data_species = set(gdf['species'].dropna().unique())
-
-    species_to_lookup = []
-    for s_name in all_data_species:
-        if s_name in csv_map and pd.isna(csv_map[s_name]):
-            species_to_lookup.append(s_name)
-        elif s_name not in csv_map:
-            species_to_lookup.append(s_name)
-
-    final_species_map = csv_map.copy()
+    
+    species_to_lookup = [s for s in all_data_species if s not in final_species_map or pd.isna(final_species_map.get(s))]
+    
+    newly_cached_entries = []
     if species_to_lookup:
         print(f"Found {len(species_to_lookup)} species requiring API lookup.")
         for i, species_name in enumerate(species_to_lookup, 1):
             print(f"Querying for '{species_name}' ({i}/{len(species_to_lookup)})...", end="")
             english_name = get_best_english_name(species_name)
             if english_name:
-                final_species_map[species_name] = english_name
                 print(f" Found: '{english_name}'")
+                final_species_map[species_name] = english_name
+                newly_cached_entries.append({'species': species_name, 'english_name': english_name})
             else:
-                print(" Not found.")
+                print(" Not found.") 
         print("API lookup complete.")
     else:
-        print("No new API lookups were required.")
+        print("No new API lookups were required. All species found in local lists.")
 
     gdf['english_name'] = gdf['species'].map(final_species_map)
     print("Applied final species map to create 'english_name' column.")
@@ -234,20 +241,29 @@ def main():
     unmapped_species = [s for s in all_data_species if pd.isna(final_species_map.get(s))]
     if unmapped_species:
         print(f"\nWarning: {len(unmapped_species)} species could not be mapped to an English name.")
-        print("    For complete accuracy, please add the following species to your 'species list.csv':")
-        for s in sorted(unmapped_species):
-            print(f"      - {s}")
     else:
         print("All species were successfully mapped to an English name.")
-
 
     print("\nSaving Final Output")
     try:
         gdf.to_parquet(OUTPUT_PARQUET_PATH, index=False)
         print(f"Saved data to '{OUTPUT_PARQUET_PATH}' with {len(gdf)} rows.")
     except Exception as e:
-        print(f"ERROR: Could not save the final Parquet file.")
-        print(f"   Details: {e}")
+        print(f"ERROR: Could not save the final Parquet file. Details: {e}")
+
+    if newly_cached_entries:
+        print(f"Appending {len(newly_cached_entries)} new entries to API cache...")
+        new_cache_df = pd.DataFrame(newly_cached_entries)
+        try:
+            new_cache_df.to_csv(
+                API_CACHE_PATH, 
+                mode='a', 
+                index=False, 
+                header=not os.path.exists(API_CACHE_PATH)
+            )
+            print(f"Successfully updated '{API_CACHE_PATH}'.")
+        except Exception as e:
+            print(f"ERROR: Could not write to cache file '{API_CACHE_PATH}'. Details: {e}")
 
 if __name__ == '__main__':
     main()
