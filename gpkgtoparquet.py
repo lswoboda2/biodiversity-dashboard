@@ -6,27 +6,59 @@ import time
 import re
 import os
 import sys
+import fiona  
 
 if len(sys.argv) > 1:
     INPUT_GPKG_PATH = sys.argv[1]
 else:
-    # If we don't give it a file, it will use the old path for local testing.
-    INPUT_GPKG_PATH = 'default_path.gpkg' # You can change this to your local path
+    INPUT_GPKG_PATH = 'default_path.gpkg'
     print("Error: Please provide the path to the .gpkg file.")
-    sys.exit(1) # Exit if no file is provided in the automation
+    sys.exit(1)
 
-LAYER_NAME = 'All data 2025-26'
 
 SPECIES_CSV_PATH = 'species list.csv'
+OUTPUT_PARQUET_PATH = 'data.parquet'  
 
-OUTPUT_PARQUET_PATH = 'alldata_cleaned.parquet'
+def find_best_layer(gpkg_path: str) -> str | None:
+    """
+    Inspects a GeoPackage file and returns the name of the layer with the most features.
+    """
+    print(f"\nInspecting layers in: {gpkg_path}")
+    try:
+        layer_names = fiona.listlayers(gpkg_path)
+    except Exception as e:
+        print(f"ERROR: Could not open or list layers in the file. It may be corrupt or invalid.")
+        print(f"   Details: {e}")
+        return None
+
+    if not layer_names:
+        print("WARNING: No layers found in the GeoPackage file.")
+        return None
+
+    layer_counts = {}
+    for name in layer_names:
+        try:
+            with fiona.open(gpkg_path, layer=name) as layer:
+                count = len(layer)
+                layer_counts[name] = count
+        except Exception as e:
+            print(f"WARNING: Could not read feature count for layer '{name}'. Skipping. Details: {e}")
+            layer_counts[name] = 0
+
+    if not layer_counts or max(layer_counts.values()) == 0:
+        print("WARNING: Found layers, but none contain any data.")
+        return None
+
+    best_layer = max(layer_counts, key=layer_counts.get)
+    print(f"Layer feature counts: {layer_counts}. Selected '{best_layer}' as the target layer.")
+    return best_layer
 
 def get_name_from_itis(species_name: str) -> str | None:
     """Looks up a name from the Integrated Taxonomic Information System (ITIS)."""
     try:
         url = "https://www.itis.gov/ITISWebService/jsonservice/searchForAnyMatch"
         params = {'srchKey': species_name, 'searchType': 'exact'}
-        time.sleep(0.5)  
+        time.sleep(0.5)
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
         data = response.json().get('anyMatchList', [{}])[0]
@@ -93,7 +125,7 @@ def get_best_english_name(species_name: str) -> str | None:
     """
     if not species_name or pd.isna(species_name):
         return None
-        
+
     cleaned_name = species_name.replace('_', ' ').strip()
     cleaned_name = re.sub(r'\s+sp\.?$', '', cleaned_name, flags=re.IGNORECASE)
 
@@ -109,17 +141,22 @@ def get_best_english_name(species_name: str) -> str | None:
     if name:
         return name
 
-    return None  
+    return None
 
 def main():
     """Main function to execute the full data processing pipeline."""
+
+    layer_to_load = find_best_layer(INPUT_GPKG_PATH)
+    if layer_to_load is None:
+        print("Stopping process as no suitable data layer could be found in the GPKG file.")
+        return  
 
     print("\nLoading and Cleaning GeoPackage Data")
     try:
         if not os.path.exists(INPUT_GPKG_PATH):
             raise FileNotFoundError(f"GeoPackage file not found at: {INPUT_GPKG_PATH}")
-        gdf = gpd.read_file(INPUT_GPKG_PATH, layer=LAYER_NAME)
-        print(f"Read {len(gdf)} rows from layer '{LAYER_NAME}'.")
+        gdf = gpd.read_file(INPUT_GPKG_PATH, layer=layer_to_load)
+        print(f"Read {len(gdf)} rows from layer '{layer_to_load}'.")
     except Exception as e:
         print(f"ERROR: Could not read the GeoPackage file. Please check the path and layer name.")
         print(f"   Details: {e}")
@@ -162,20 +199,20 @@ def main():
         print(f"ERROR: Could not read the species CSV file. Please check the file path and format.")
         print(f"   Details: {e}")
         return
-        
+
     if 'species' not in gdf.columns:
         print(f"ERROR: The main data is missing the required 'species' column.")
         return
 
     all_data_species = set(gdf['species'].dropna().unique())
-    
+
     species_to_lookup = []
     for s_name in all_data_species:
         if s_name in csv_map and pd.isna(csv_map[s_name]):
             species_to_lookup.append(s_name)
         elif s_name not in csv_map:
             species_to_lookup.append(s_name)
-            
+
     final_species_map = csv_map.copy()
     if species_to_lookup:
         print(f"Found {len(species_to_lookup)} species requiring API lookup.")

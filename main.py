@@ -12,7 +12,6 @@ from math import ceil
 
 app = FastAPI(title="Biodiversity Dashboard", version="1.0.0")
 
-# Production origins from your GitHub version
 origins = [
     "https://biodiversitydashboard-ls.netlify.app",
 ]
@@ -29,8 +28,7 @@ app.add_middleware(
 def read_root_head():
     return Response(status_code=200)
 
-# Production data path from your GitHub version
-DATA_PATH = Path(__file__).parent / "alldata_cleaned.parquet"
+DATA_PATH = Path(__file__).parent / "data.parquet"
 df = None
 ALL_UNIQUE_SPECIES = []
 
@@ -191,7 +189,6 @@ def get_diversity_summary(
         "species_richness": int(species_richness),
     }
 
-# Updated endpoint from your local version
 @app.get("/api/summary/species_distribution")
 def get_species_distribution(
     english_name: Optional[str] = None,
@@ -255,7 +252,6 @@ def get_observer_comparison(
     comparison = query_df.groupby(["obs", "taxa"]).size().unstack(fill_value=0)
     return comparison.to_dict(orient="dict")
 
-# Updated endpoint from your local version
 @app.get("/api/summary/observer/{observer_name}")
 def get_observer_stats(
     observer_name: str,
