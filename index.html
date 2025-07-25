@@ -4,11 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Biodiversity Dashboard</title>
-
+    
     <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 
     <style>
         :root {
@@ -18,64 +26,115 @@
             --border-color: #dee2e6;
             --card-shadow: 0 4px 8px rgba(0,0,0,0.05);
             --error-color: #dc3545;
+            --highlight-color: #cfe2ff;
         }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            margin: 0; padding: 1.5em; color: #333; background-color: #f4f7f6;
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            margin: 0; padding: 1.5em; color: #333; background-color: #f4f7f6; 
         }
         h1, h2 { color: #212529; border-bottom: 2px solid var(--primary-color); padding-bottom: 0.3em; margin-top: 2em; margin-bottom: 1em; }
         h1:first-of-type, h2:first-of-type { margin-top: 0; }
-        .filter-bar { padding: 1em 1.5em; background-color: #fff; border-radius: 8px; box-shadow: var(--card-shadow); margin-bottom: 1.5em; display: flex; flex-wrap: wrap; gap: 1.5em; align-items: flex-end; }
+        .filter-bar { padding: 1em 1.5em; background-color: #fff; border-radius: 8px; box-shadow: var(--card-shadow); margin-bottom: 1.5em; display: flex; flex-wrap: wrap; gap: 1.5em; align-items: flex-start; }
         .filter-group { flex: 1 1 200px; }
         .filter-group label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 0.9em; }
+        
+        .date-filter-group { flex: 2 1 420px; min-width: 420px; }
+        .date-filter-group fieldset { border: 1px solid var(--border-color); border-radius: 6px; padding: 0.5em 1em 1em 1em; display: flex; gap: 1.5em; }
+        .date-filter-group legend { font-weight: bold; font-size: 0.9em; padding: 0 0.5em; margin-left: 0.5em; color: #333; }
+
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5em; }
-        .card {
-            background-color: #fff; padding: 1.5em; border-radius: 8px;
-            box-shadow: var(--card-shadow); margin-bottom: 1.5em;
-        }
+        .card { background-color: #fff; padding: 1.5em; border-radius: 8px; box-shadow: var(--card-shadow); margin-bottom: 1.5em; position: relative; }
         .chart-card { overflow: hidden; }
         .stat-card { text-align: center; }
         .stat-card h4 { margin: 0 0 0.5em 0; color: var(--secondary-color); font-weight: normal; }
         .stat-card p { margin: 0; font-size: 2em; font-weight: bold; color: var(--primary-color); }
-        .table-wrapper { width: 100%; overflow-x: auto; padding: 1.5em; }
+        .table-wrapper { width: 100%; overflow-x: auto; }
         table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
         th, td { border: 1px solid var(--border-color); padding: 10px; text-align: left; }
         th { background-color: var(--light-gray); }
         td.wrap-text { white-space: normal; word-break: break-word; max-width: 250px; }
+        tr.highlighted { background-color: var(--highlight-color) !important; }
         button { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; }
-        .pagination { display: flex; justify-content: center; align-items: center; gap: 1em; padding: 0 1.5em 1.5em 1.5em; }
+        .pagination { display: flex; justify-content: center; align-items: center; gap: 1em; padding: 1.5em; }
         .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.7); display: flex; justify-content: center; align-items: center; z-index: 10; font-style: italic; color: #666; }
         .error-message { text-align: center; color: var(--error-color); padding: 2em; }
 
-        .card-title {
-            font-weight: 600;
-            color: #333;
+        .card-header-collapsible { display: flex; justify-content: space-between; align-items: center; padding: 1em 1.5em; cursor: pointer; background-color: var(--light-gray); border-bottom: 1px solid var(--border-color); }
+        .card-header-collapsible .card-title { font-weight: bold; }
+        .card-content-collapsible { max-height: 1000px; overflow: hidden; transition: max-height 0.5s ease-in-out, padding 0.5s ease-in-out; padding: 0; }
+        .card-content-collapsible.collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; }
+        
+        .toggle-buttons { text-align: center; margin-bottom: 1.5em; }
+        .toggle-buttons button { background-color: var(--secondary-color); }
+        .toggle-buttons button.active { background-color: var(--primary-color); }
+
+        /* Map and Legend specific styles */
+        #map-container { height: 600px; border-radius: 8px; }
+        .legend-container {
+            background: rgba(255,255,255,0.9);
+            box-shadow: 0 1px 5px rgba(0,0,0,0.4);
+            border-radius: 5px;
+            padding: 10px;
+            width: 240px;
         }
-        .card-header-collapsible {
+        .legend-accordion-header {
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            padding: 5px 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            cursor: pointer;
-            padding: 1em 1.5em;
-            background-color: var(--light-gray);
-            border-bottom: 1px solid var(--border-color);
         }
-        .card-header-collapsible .icon {
-            font-weight: bold;
-            font-size: 1.2em;
-            color: var(--secondary-color);
+        .legend-accordion-header .arrow {
+            transition: transform 0.2s ease-in-out;
         }
-        .card-content-collapsible {
-            max-height: 10000px;
-            overflow: hidden;
-            transition: max-height 0.5s ease-in-out;
-            visibility: visible;
+        .legend-accordion-header.active .arrow {
+            transform: rotate(180deg);
         }
-        .card-content-collapsible.collapsed {
+        .legend-accordion-content {
             max-height: 0;
-            visibility: hidden;
-            border-top: none;
+            overflow: hidden;
+            transition: max-height 0.3s ease-in-out;
         }
+        .legend-accordion-content.show {
+            max-height: 250px; /* Max height before scrolling */
+            overflow-y: auto;
+        }
+        .legend-controls {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8em;
+            margin: 8px 0;
+            padding-right: 5px;
+        }
+        .legend-controls a {
+            color: var(--primary-color);
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+        .legend-item label {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            font-weight: normal;
+            font-size: 1em;
+        }
+        .legend-item input { margin-right: 10px; }
+        .legend-item i {
+            width: 20px; height: 20px;
+            float: left; margin-right: 10px;
+            opacity: 0.9; border-radius: 50%;
+            border: 1px solid #777;
+        }
+        .leaflet-popup-content-wrapper { border-radius: 5px; }
+        .leaflet-popup-content { font-size: 0.9em; }
+        .leaflet-popup-content b { font-weight: bold; }
     </style>
 </head>
 <body>
@@ -86,32 +145,63 @@
         <div class="filter-group"><label for="species-filter">Scientific Name</label><select id="species-filter" class="filter-select" multiple="multiple"></select></div>
         <div class="filter-group"><label for="obs-filter">Observer</label><select id="obs-filter" class="filter-select" multiple="multiple"></select></div>
         <div class="filter-group"><label for="taxa-filter">Taxa</label><select id="taxa-filter" class="filter-select" multiple="multiple"></select></div>
-        <div class="filter-group"><label for="month-filter">Month</label><select id="month-filter" class="filter-select-single"></select></div>
-        <div class="filter-group"><label for="year-filter">Year</label><select id="year-filter" class="filter-select-single"></select></div>
-        <div><button id="clear-filters" style="background-color: var(--secondary-color);">Clear Filters</button></div>
+        
+        <div class="date-filter-group">
+            <fieldset>
+                <legend>Filter by Date</legend>
+                <div class="filter-group"><label for="year-filter">Year</label><select id="year-filter" class="filter-select-single"></select></div>
+                <div class="filter-group"><label for="month-filter">Month</label><select id="month-filter" class="filter-select-single"></select></div>
+            </fieldset>
+        </div>
+
+        <div style="align-self: flex-end;"><button id="clear-filters" style="background-color: var(--secondary-color);">Clear Filters</button></div>
     </div>
 
     <h2>Dashboard Summary</h2>
-    <div class="stats-grid">
-        <div class="stat-card"><h4>Total Records</h4><p id="total-records">...</p></div>
-        <div class="stat-card"><h4>Unique Species</h4><p id="unique-species">...</p></div>
-        <div class="stat-card"><h4>Shannon Index (H')</h4><p id="shannon-index">...</p></div>
-        <div class="stat-card"><h4>Gini-Simpson Index (1-D)</h4><p id="simpson-index">...</p></div>
+    <div class="card">
+        <div class="stats-grid">
+            <div class="stat-card"><h4>Total Records</h4><p id="total-records">...</p></div>
+            <div class="stat-card"><h4>Unique Species</h4><p id="unique-species">...</p></div>
+            <div class="stat-card"><h4>Shannon Index (H')</h4><p id="shannon-index">...</p></div>
+            <div class="stat-card"><h4>Gini-Simpson Index (1-D)</h4><p id="simpson-index">...</p></div>
+        </div>
+    </div>
+
+    <h2>Live Map</h2>
+    <div class="card" style="padding: 0;">
+        <div id="map-container"></div>
+    </div>
+
+    <h2>Annual Trends</h2>
+    <div class="card" id="annual-trends-container">
+        <div class="toggle-buttons">
+            <button id="annual-absolute-btn" class="active">Absolute</button>
+            <button id="annual-standardized-btn">Standardized Growth</button>
+        </div>
+        <div id="annual-chart-wrapper">
+            <div id="annual-trends-chart" class="chart-card" style="height: 400px;"></div>
+        </div>
+        <div class="table-wrapper" style="margin-top: 2em;">
+            <table id="annual-trends-table">
+                <thead>
+                    <tr>
+                        <th>Year</th>
+                        <th>Total Records</th>
+                        <th>Unique Species</th>
+                        <th>Shannon Index</th>
+                        <th>Simpson Index</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
     </div>
 
     <h2>Complete Species List</h2>
-    <div class="card" style="padding: 0; position: relative; margin-top: 0;">
-        <div class="card-header-collapsible" id="species-list-toggle">
-            <span class="card-title">Toggle List View</span>
-            <span class="icon">[-]</span>
-        </div>
+    <div class="card" style="padding: 0; position: relative;">
+        <div class="card-header-collapsible" id="species-list-toggle"><span class="card-title">Toggle List View</span><span class="icon">[-]</span></div>
         <div class="card-content-collapsible">
-             <div class="table-wrapper">
-                <table id="unique-species-table">
-                    <thead><tr><th>Scientific Name</th></tr></thead>
-                    <tbody></tbody>
-                </table>
-            </div>
+             <div class="table-wrapper" style="padding: 1.5em;"><table id="unique-species-table"><thead><tr><th>Scientific Name</th></tr></thead><tbody></tbody></table></div>
             <div class="pagination" id="unique-species-pagination"></div>
         </div>
     </div>
@@ -123,97 +213,424 @@
 
     <h2>Data Records</h2>
     <div class="card" style="padding: 0; position: relative;">
-        <div class="table-wrapper">
-            <table id="records-table"><thead><tr><th>English Name</th><th>Scientific Name</th><th>Observer</th><th>Date</th><th>Count</th><th>Taxa</th><th>Latitude</th><th>Longitude</th></tr></thead><tbody></tbody></table>
-        </div>
+        <div class="table-wrapper" style="padding: 1.5em;"><table id="records-table"><thead><tr><th>English Name</th><th>Scientific Name</th><th>Observer</th><th>Date</th><th>Count</th><th>Taxa</th><th>Latitude</th><th>Longitude</th></tr></thead><tbody></tbody></table></div>
         <div class="pagination" id="pagination-container"></div>
     </div>
 
 <script>
 $(document).ready(function() {
-    // Production API URL from your GitHub version
     const API_BASE_URL = "https://biodiversity-dashboard.onrender.com";
     const plotlyConfig = { responsive: true, displaylogo: false };
     const monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    
     let isUpdatingFilters = false;
+    let isInitialLoad = true;
+    let annualData = [];
+    let map, drawnItems, highlightedMarker = null;
+    let geographicFilter = null;
+    
+    let markerLayers = {}, taxaLayerGroups = {}, taxaColors = {}, taxaVisibilityState = {};
+    let habitatColors = {}, habitatLayerGroups = {}, habitatVisibilityState = {};
+    let habitatBounds = null, speciesBounds = null;
 
     function initializeDashboard() {
         $('.filter-select').select2({ width: '100%', placeholder: 'All', allowClear: true });
         $('.filter-select-single').select2({ width: '100%', placeholder: 'All', allowClear: true });
-
-        updateFilterOptions().then(updateAllDashboardComponents);
-        loadUniqueSpeciesTable(1);
-
-        $('#clear-filters').on('click', clearFilters);
-        $('.filter-select, .filter-select-single').on('change', () => {
-            if (!isUpdatingFilters) {
-                setTimeout(() => {
-                    updateFilterOptions().then(updateAllDashboardComponents);
-                }, 300);
-            }
-        });
-
+        
+        $('#clear-filters').on('click', handleClearFilters);
+        $('.filter-select, .filter-select-single').on('change', handleFilterChange);
+        
         $('#species-list-toggle').on('click', function() {
             const content = $(this).next('.card-content-collapsible');
             const icon = $(this).find('.icon');
-
             content.toggleClass('collapsed');
-
-            if (content.hasClass('collapsed')) {
-                icon.text('[+]');
-            } else {
-                icon.text('[-]');
-            }
+            icon.text(content.hasClass('collapsed') ? '[+]' : '[-]');
         });
+
+        initializeMap();
+        
+        $('#annual-trends-container').on('click', '#annual-absolute-btn', () => drawAnnualChart('absolute'));
+        $('#annual-trends-container').on('click', '#annual-standardized-btn', () => drawAnnualChart('standardized'));
+
+        $('#records-table').on('mouseenter', 'tbody tr', handleTableRowHover);
+        $('#records-table').on('mouseleave', 'tbody tr', handleTableRowLeave);
+        $(document).on('change', '.legend-item input[type="checkbox"]', handleLegendToggle);
+        $(document).on('click', '.legend-controls a', handleLegendControls);
+        $(document).on('click', '.legend-accordion-header', handleAccordionToggle);
+
+        const habitatPromise = loadHabitatLayer();
+        const initialUpdatePromise = updateFilterOptions().then(updateAllDashboardComponents);
+        updateAnnualTrends();
+        loadUniqueSpeciesTable(1);
+
+        $.when(habitatPromise, initialUpdatePromise).done(checkAndFitBounds);
     }
 
-    // New function from your local version
-    function loadUniqueSpeciesTable(page = 1) {
-        const card = $('#unique-species-table').closest('.card');
-        card.append('<div class="loading-overlay"><span>Loading...</span></div>');
+    function initializeMap() {
+        map = L.map('map-container').setView([56.340, -2.796], 13);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
 
-        return $.get(`${API_BASE_URL}/api/all_unique_species`, { page: page, page_size: 10 }).done(data => {
-            const tableBody = $('#unique-species-table tbody').empty();
-            if (!data.species_list || data.species_list.length === 0) {
-                tableBody.append('<tr><td style="text-align:center; padding: 2em;">No species found.</td></tr>');
-            } else {
-                data.species_list.forEach(speciesName => {
-                    tableBody.append(`<tr><td><em>${speciesName}</em></td></tr>`);
-                });
+        map.createPane('habitatPane');
+        map.getPane('habitatPane').style.zIndex = 390;
+        map.createPane('markerPane');
+        map.getPane('markerPane').style.zIndex = 400;
+        
+        drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        const drawControl = new L.Control.Draw({
+            draw: {
+                polygon: false, polyline: false, circle: false, marker: false, circlemarker: false,
+                rectangle: { shapeOptions: { color: '#007bff' } }
+            },
+            edit: { featureGroup: drawnItems, remove: true }
+        });
+        map.addControl(drawControl);
+
+        map.on(L.Draw.Event.CREATED, function (e) {
+            drawnItems.clearLayers();
+            drawnItems.addLayer(e.layer);
+            const bounds = e.layer.getBounds();
+            geographicFilter = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+            updateAllDashboardComponents();
+        });
+
+        map.on(L.Draw.Event.DELETED, function () {
+            geographicFilter = null;
+            updateAllDashboardComponents();
+        });
+
+        const legendContainer = L.control({position: 'bottomright'});
+        legendContainer.onAdd = function(map) {
+            const div = L.DomUtil.create('div', 'legend-container');
+            // THE FIX: Add event listeners to stop propagation
+            L.DomEvent.disableClickPropagation(div);
+            L.DomEvent.disableScrollPropagation(div);
+            
+            div.innerHTML = `
+                <div id="species-legend" class="map-legend"></div>
+                <div id="habitat-legend" class="map-legend"></div>
+            `;
+            return div;
+        };
+        legendContainer.addTo(map);
+    }
+
+    function checkAndFitBounds() {
+        if (isInitialLoad) {
+            let combinedBounds = L.latLngBounds([]);
+            if (habitatBounds && habitatBounds.isValid()) {
+                combinedBounds.extend(habitatBounds);
             }
-            updateUniqueSpeciesPagination(data.total_pages, data.page);
+            if (speciesBounds && speciesBounds.isValid()) {
+                combinedBounds.extend(speciesBounds);
+            }
+
+            if (combinedBounds.isValid()) {
+                map.fitBounds(combinedBounds.pad(0.1));
+            }
+            isInitialLoad = false;
+        } else {
+            if ((!speciesBounds || !speciesBounds.isValid()) && (habitatBounds && habitatBounds.isValid())) {
+                map.fitBounds(habitatBounds.pad(0.1));
+            }
+        }
+    }
+
+    function loadHabitatLayer() {
+        return $.get(`${API_BASE_URL}/api/habitat_polygons`).done(data => {
+            if (!data || !data.features) {
+                $('#habitat-legend').hide();
+                return;
+            }
+
+            const UNKNOWN_HABITAT = "Unknown Habitat";
+            const classifications = [...new Set(data.features.map(f => f.properties['habitat classification (broad)'] || UNKNOWN_HABITAT))].sort();
+            
+            habitatLayerGroups = {};
+            classifications.forEach(name => {
+                habitatLayerGroups[name] = L.layerGroup();
+                if (habitatVisibilityState[name] === undefined) {
+                    habitatVisibilityState[name] = true;
+                }
+                if (!habitatColors[name]) {
+                    habitatColors[name] = stringToColor(name);
+                }
+            });
+
+            const geoJsonLayer = L.geoJSON(data, {
+                onEachFeature: function(feature, layer) {
+                    let classification = feature.properties['habitat classification (broad)'] || UNKNOWN_HABITAT;
+                    if (habitatLayerGroups[classification]) {
+                        const props = feature.properties;
+                        const area = props['newarea'] ? `${Math.round(props['newarea']).toLocaleString()} m²` : 'N/A';
+                        layer.bindPopup(`<b>Habitat:</b> ${classification}<br><b>Area:</b> ${area}`);
+                        habitatLayerGroups[classification].addLayer(layer);
+                    }
+                    layer.on({
+                        mouseover: (e) => e.target.setStyle({ weight: 3, color: '#FFFF00' }),
+                        mouseout: (e) => geoJsonLayer.resetStyle(e.target)
+                    });
+                },
+                style: styleHabitat
+            });
+
+            classifications.forEach(name => {
+                if (habitatVisibilityState[name]) {
+                    map.addLayer(habitatLayerGroups[name]);
+                }
+            });
+            
+            habitatBounds = geoJsonLayer.getBounds();
+
+            let legendContent = `
+                <div class="legend-accordion-header" data-target="#habitat-content">
+                    <span>Habitats</span><span class="arrow">▼</span>
+                </div>
+                <div class="legend-accordion-content" id="habitat-content">
+                    <div class="legend-controls">
+                        <a data-type="habitat" data-action="all">Select All</a>
+                        <a data-type="habitat" data-action="none">Deselect All</a>
+                    </div>
+                    <div class="legend-scroll-content">`;
+            classifications.forEach(name => {
+                const isChecked = habitatVisibilityState[name] ? 'checked' : '';
+                legendContent += `<div class="legend-item">
+                    <label>
+                        <input type="checkbox" data-type="habitat" data-name="${name}" ${isChecked}>
+                        <i style="background:${habitatColors[name]}; opacity: 0.5;"></i> ${name}
+                    </label>
+                </div>`;
+            });
+            legendContent += `</div></div>`;
+            $('#habitat-legend').html(legendContent).show();
+            
         }).fail(() => {
-            showErrorMessage('#unique-species-table tbody', 'Could not load the species list.');
-        }).always(() => {
-            card.find('.loading-overlay').remove();
+            console.error("Could not load habitat polygons.");
+            $('#habitat-legend').hide();
         });
     }
 
-    // New function from your local version
-    function updateUniqueSpeciesPagination(totalPages, page) {
-        const container = $('#unique-species-pagination').empty();
-        if (totalPages <= 1) return;
-        const prevButton = $('<button>&laquo; Previous</button>').on('click', () => loadUniqueSpeciesTable(page - 1)).prop('disabled', page === 1);
-        const nextButton = $('<button>Next &raquo;</button>').on('click', () => loadUniqueSpeciesTable(page + 1)).prop('disabled', page === totalPages);
-        container.append(prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton);
+    function styleHabitat(feature) {
+        const classification = feature.properties['habitat classification (broad)'] || "Unknown Habitat";
+        const color = habitatColors[classification] || '#808080';
+        return {
+            fillColor: color,
+            fillOpacity: 0.5,
+            weight: 1.5,
+            color: color,
+            opacity: 0.8,
+            pane: 'habitatPane'
+        };
+    }
+
+    function handleAccordionToggle(event) {
+        const header = $(event.currentTarget);
+        const content = header.next('.legend-accordion-content');
+        const wasActive = header.hasClass('active');
+
+        $('.legend-accordion-header').removeClass('active');
+        $('.legend-accordion-content').removeClass('show');
+
+        if (!wasActive) {
+            header.addClass('active');
+            content.addClass('show');
+        }
+    }
+
+    function handleLegendControls(event) {
+        const type = $(event.target).data('type');
+        const action = $(event.target).data('action');
+        const shouldBeChecked = action === 'all';
+        
+        $(`.legend-item input[data-type="${type}"]`).prop('checked', shouldBeChecked).trigger('change');
+    }
+
+    function handleLegendToggle(event) {
+        const type = $(event.target).data('type');
+        const name = $(event.target).data('name');
+        const isChecked = event.target.checked;
+
+        if (type === 'species') {
+            taxaVisibilityState[name] = isChecked;
+            const layerGroup = taxaLayerGroups[name];
+            if (layerGroup) {
+                if (isChecked) markerLayers.clusterGroup.addLayer(layerGroup);
+                else markerLayers.clusterGroup.removeLayer(layerGroup);
+            }
+        } else if (type === 'habitat') {
+            habitatVisibilityState[name] = isChecked;
+            const layerGroup = habitatLayerGroups[name];
+            if (layerGroup) {
+                if (isChecked) map.addLayer(layerGroup);
+                else map.removeLayer(layerGroup);
+            }
+        }
+    }
+
+    function updateMap(filters) {
+        if (markerLayers.clusterGroup) {
+            map.removeLayer(markerLayers.clusterGroup);
+        }
+        markerLayers = { individual: {}, clusterGroup: L.markerClusterGroup({ pane: 'markerPane' }) };
+        taxaLayerGroups = {};
+
+        return $.get(`${API_BASE_URL}/api/map_data`, filters).done(data => {
+            const speciesLegendDiv = $('#species-legend');
+            if (!data || data.length === 0) {
+                speciesLegendDiv.html(`
+                    <div class="legend-accordion-header active" data-target="#species-content">
+                        <span>Species</span><span class="arrow">▼</span>
+                    </div>
+                    <div class="legend-accordion-content show" id="species-content">No species data for this selection.</div>`);
+                speciesBounds = null;
+                checkAndFitBounds();
+                return;
+            }
+
+            const uniqueTaxa = [...new Set(data.map(item => item.taxa || 'Unknown'))].sort();
+            
+            uniqueTaxa.forEach(taxa => {
+                taxaLayerGroups[taxa] = L.layerGroup();
+                if (taxaVisibilityState[taxa] === undefined) {
+                    taxaVisibilityState[taxa] = true;
+                }
+            });
+
+            taxaColors = uniqueTaxa.reduce((acc, taxa) => {
+                acc[taxa] = stringToColor(taxa);
+                return acc;
+            }, {});
+
+            data.forEach(point => {
+                const taxa = point.taxa || 'Unknown';
+                const marker = L.circleMarker([point.latitude, point.longitude], {
+                    radius: 8, fillColor: taxaColors[taxa], color: "#000",
+                    weight: 1, opacity: 1, fillOpacity: 0.8, pane: 'markerPane'
+                });
+
+                const popupContent = `<b>${point.english_name || 'N/A'}</b><br><i>${point.species || 'N/A'}</i><br><hr><b>Observer:</b> ${point.obs || 'N/A'}<br><b>Date:</b> ${point.Date ? new Date(point.Date).toLocaleDateString() : 'N/A'}<br><b>Taxa:</b> ${taxa}`;
+                marker.bindPopup(popupContent);
+                marker.on('click', () => handleMapMarkerClick(point.id));
+                
+                taxaLayerGroups[taxa].addLayer(marker);
+                markerLayers.individual[point.id] = marker;
+            });
+
+            uniqueTaxa.forEach(taxa => {
+                if (taxaVisibilityState[taxa]) {
+                    markerLayers.clusterGroup.addLayer(taxaLayerGroups[taxa]);
+                }
+            });
+
+            map.addLayer(markerLayers.clusterGroup);
+            speciesBounds = markerLayers.clusterGroup.getBounds();
+            checkAndFitBounds();
+
+            let legendContent = `
+                <div class="legend-accordion-header active" data-target="#species-content">
+                    <span>Species</span><span class="arrow">▼</span>
+                </div>
+                <div class="legend-accordion-content show" id="species-content">
+                    <div class="legend-controls">
+                        <a data-type="species" data-action="all">Select All</a>
+                        <a data-type="species" data-action="none">Deselect All</a>
+                    </div>
+                    <div class="legend-scroll-content">`;
+            uniqueTaxa.forEach(taxa => {
+                const isChecked = taxaVisibilityState[taxa] ? 'checked' : '';
+                legendContent += `<div class="legend-item">
+                    <label>
+                        <input type="checkbox" data-type="species" data-name="${taxa}" ${isChecked}>
+                        <i style="background:${taxaColors[taxa]}"></i> ${taxa}
+                    </label>
+                </div>`;
+            });
+            legendContent += '</div></div>';
+            speciesLegendDiv.html(legendContent);
+        });
+    }
+
+    function handleClearFilters() {
+        if (isUpdatingFilters) return;
+        isInitialLoad = true;
+        geographicFilter = null;
+        drawnItems.clearLayers();
+        taxaVisibilityState = {};
+        habitatVisibilityState = {};
+        $('.legend-item input[type="checkbox"]').prop('checked', true);
+        Object.values(habitatLayerGroups).forEach(lg => { if (lg && !map.hasLayer(lg)) map.addLayer(lg); });
+        $('.filter-select, .filter-select-single').val(null).trigger('change');
+    }
+
+    function handleFilterChange() {
+        if (isUpdatingFilters) return;
+        isInitialLoad = false;
+        updateFilterOptions().then(updateAllDashboardComponents);
+    }
+
+    function updateFilterOptions() {
+        isUpdatingFilters = true;
+        const currentFilters = getActiveFilters();
+        return $.get(`${API_BASE_URL}/api/filter-options`, currentFilters).done(data => {
+            $('.filter-select, .filter-select-single').each(function() {
+                const selector = $(this);
+                const key = selector.attr('id').replace('-filter', '');
+                const selectedValue = selector.val();
+                selector.empty();
+                if (selector.hasClass('filter-select-single')) {
+                    selector.append(new Option('All', '', false, false));
+                }
+                if (data[key]) {
+                    data[key].forEach(val => {
+                        const text = key === 'month' ? monthNames[val] : val;
+                        selector.append(new Option(text, val));
+                    });
+                }
+                selector.val(selectedValue);
+            });
+            $('.filter-select, .filter-select-single').trigger('change.select2');
+        }).fail(() => {
+            console.error("Failed to update filter options.");
+            alert("Error: Could not contact the server to update filters.");
+        }).always(() => {
+            isUpdatingFilters = false;
+        });
+    }
+
+    function getActiveFilters() {
+        const filters = {};
+        $('.filter-select, .filter-select-single').each(function() {
+            const id = $(this).attr('id').replace('-filter', '');
+            let val = $(this).val();
+            if (val && Array.isArray(val) && val.length > 0) filters[id] = val.join(',');
+            else if (val && !Array.isArray(val) && val !== '') filters[id] = val;
+        });
+        if (geographicFilter) {
+            filters.bbox = geographicFilter;
+        }
+        return filters;
     }
 
     function updateAllDashboardComponents() {
         const filters = getActiveFilters();
         setLoadingState(true);
-        const tableRequest = loadTable(filters, 1);
-        const summaryRequest = updateSummaryStats(filters);
-        const speciesDistRequest = updateSpeciesDistributionChart(filters);
-        const observerChartRequest = updateObserverChart(filters);
-        const temporalChartRequest = updateTemporalChart(filters);
-        $.when(tableRequest, summaryRequest, speciesDistRequest, observerChartRequest, temporalChartRequest).always(() => {
-            setLoadingState(false);
-        });
+        const requests = [
+            loadTable(filters, 1),
+            updateSummaryStats(filters),
+            updateMap(filters),
+            updateSpeciesDistributionChart(filters),
+            updateObserverChart(filters),
+            updateTemporalChart(filters)
+        ];
+        return $.when(...requests).always(() => setLoadingState(false));
     }
 
     function setLoadingState(isLoading) {
         $('.error-message').remove();
-        const mainCards = $('.card:visible').not('#unique-species-table .card');
+        const mainCards = $('.card:visible').not('#unique-species-table .card, #annual-trends-container'); 
         if (isLoading) {
             mainCards.append('<div class="loading-overlay"><span>Loading...</span></div>');
         } else {
@@ -225,53 +642,7 @@ $(document).ready(function() {
         $(containerSelector).html(`<div class="error-message">${message}</div>`);
     }
 
-    function getActiveFilters() {
-        const filters = {};
-        $('.filter-select, .filter-select-single').each(function() {
-            const id = $(this).attr('id').replace('-filter', '');
-            let val = $(this).val();
-            if (val && Array.isArray(val) && val.length > 0) {
-                filters[id] = val.join(',');
-            } else if (val && !Array.isArray(val) && val !== '') {
-                filters[id] = val;
-            }
-        });
-        return filters;
-    }
-
-    function updateFilterOptions() {
-        isUpdatingFilters = true;
-        const currentFilters = getActiveFilters();
-        return $.get(`${API_BASE_URL}/api/filter-options`, currentFilters).done(data => {
-            $('.filter-select, .filter-select-single').each(function() {
-                const key = $(this).attr('id').replace('-filter', '');
-                const selector = $(this);
-                const selectedVals = selector.val();
-                selector.empty();
-                if (selector.hasClass('filter-select-single')) {
-                     selector.append(new Option('All', '', false, false));
-                }
-                if (data[key]) {
-                    data[key].forEach(val => {
-                        const text = key === 'month' ? monthNames[val] : val;
-                        selector.append(new Option(text, val));
-                    });
-                }
-                selector.val(selectedVals).trigger('change.select2');
-            });
-            isUpdatingFilters = false;
-        }).fail(() => {
-            console.error("Failed to update filter options.");
-            isUpdatingFilters = false;
-        });
-    }
-
-    function clearFilters() {
-        if (isUpdatingFilters) return;
-        $('.filter-select, .filter-select-single').val(null).trigger('change');
-    }
-
-    function loadTable(filters, page = 1) {
+    function loadTable(filters, page = 1, recordToHighlight = null) {
         return $.get(`${API_BASE_URL}/api/records`, { ...filters, page: page }).done(data => {
             $('#total-records').text(data.total_records.toLocaleString());
             const tableBody = $('#records-table tbody').empty();
@@ -279,22 +650,61 @@ $(document).ready(function() {
                 tableBody.append('<tr><td colspan="8" style="text-align:center; padding: 2em;">No records found.</td></tr>');
             } else {
                 data.records.forEach(row => {
-                    const tableRow = `<tr><td class="wrap-text" title="${row.english_name || ''}">${row.english_name || ''}</td><td>${row.species || ''}</td><td>${row.obs || ''}</td><td>${row.Date ? new Date(row.Date).toLocaleDateString() : ''}</td><td>${row.count || ''}</td><td>${row.taxa || ''}</td><td>${row.latitude || ''}</td><td>${row.longitude || ''}</td></tr>`;
+                    const tableRow = `<tr data-record-id="${row.id}"><td class="wrap-text" title="${row.english_name || ''}">${row.english_name || ''}</td><td>${row.species || ''}</td><td>${row.obs || ''}</td><td>${row.Date ? new Date(row.Date).toLocaleDateString() : ''}</td><td>${row.count || ''}</td><td>${row.taxa || ''}</td><td>${row.latitude || ''}</td><td>${row.longitude || ''}</td></tr>`;
                     tableBody.append(tableRow);
                 });
             }
             updatePagination(data.total_pages, data.page, filters);
+
+            if (recordToHighlight) {
+                const row = $(`#records-table tr[data-record-id="${recordToHighlight}"]`);
+                if (row.length) {
+                    $('#records-table tr').removeClass('highlighted');
+                    row.addClass('highlighted');
+                    row[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
         }).fail(() => {
             showErrorMessage('#records-table tbody', 'Could not load records from server.');
             $('#total-records').text('Error');
         });
     }
 
+    function handleTableRowHover(event) {
+        const recordId = $(event.currentTarget).data('record-id');
+        const marker = markerLayers.individual[recordId];
+        if (marker) {
+            highlightedMarker = marker;
+            marker.setRadius(12);
+            marker.setStyle({ weight: 3, color: '#ff0000' });
+            marker.bringToFront();
+        }
+    }
+
+    function handleTableRowLeave() {
+        if (highlightedMarker) {
+            highlightedMarker.setRadius(8);
+            highlightedMarker.setStyle({ weight: 1, color: '#000' });
+            highlightedMarker = null;
+        }
+    }
+
+    function handleMapMarkerClick(recordId) {
+        const filters = getActiveFilters();
+        $.get(`${API_BASE_URL}/api/record_page`, { ...filters, record_id: recordId })
+            .done(data => {
+                if (data.page) {
+                    loadTable(filters, data.page, recordId);
+                }
+            })
+            .fail(() => alert('Could not find the corresponding record in the table.'));
+    }
+
     function updatePagination(totalPages, page, filters) {
         const container = $('#pagination-container').empty();
         if (totalPages <= 1) return;
-        const prevButton = $('<button>&laquo; Previous</button>').on('click', () => loadTable(filters, page - 1)).prop('disabled', page === 1);
-        const nextButton = $('<button>Next &raquo;</button>').on('click', () => loadTable(filters, page + 1)).prop('disabled', page === totalPages);
+        const prevButton = $('<button>« Previous</button>').on('click', () => loadTable(filters, page - 1)).prop('disabled', page === 1);
+        const nextButton = $('<button>Next »</button>').on('click', () => loadTable(filters, page + 1)).prop('disabled', page === totalPages);
         container.append(prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton);
     }
 
@@ -303,119 +713,73 @@ $(document).ready(function() {
             $('#unique-species').text(data.species_richness);
             $('#shannon-index').text(data.shannon);
             $('#simpson-index').text(data.simpson);
-        }).fail(() => {
-            $('#unique-species, #shannon-index, #simpson-index').text('Error');
-        });
+        }).fail(() => $('#unique-species, #shannon-index, #simpson-index').text('Error'));
     }
 
-    function drawAndResizeChart(divId, data, layout, config) {
-        Plotly.newPlot(divId, data, layout, config);
+    function stringToColor(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        let color = '#';
+        for (let i = 0; i < 3; i++) {
+            let value = (hash >> (i * 8)) & 0xFF;
+            color += ('00' + value.toString(16)).substr(-2);
+        }
+        return color;
     }
 
-    // Updated function from your local version
     function updateSpeciesDistributionChart(filters) {
         const container = $('#species-dist-container');
         return $.get(`${API_BASE_URL}/api/summary/species_distribution`, filters).done(data => {
-            if (!data || data.length === 0) {
-                container.closest('.card').hide();
-                return;
-            }
+            if (!data || data.length === 0) { container.closest('.card').hide(); return; }
             container.closest('.card').show();
             container.empty();
-
-            const sortedData = data.slice().reverse();
+            const sortedData = data.slice().reverse(); 
             const speciesNames = sortedData.map(d => d.name);
             const chartHeight = 150 + (speciesNames.length * 35);
-
             container.height(chartHeight);
-
             const dataByTaxa = {};
             sortedData.forEach(d => {
-                if (!dataByTaxa[d.taxa]) {
-                    dataByTaxa[d.taxa] = [];
-                }
+                if (!dataByTaxa[d.taxa]) dataByTaxa[d.taxa] = [];
                 dataByTaxa[d.taxa].push(d);
             });
-
             const traces = Object.keys(dataByTaxa).map(taxaName => {
                 const x_values = speciesNames.map(name => {
                     const found = dataByTaxa[taxaName].find(d => d.name === name);
                     return found ? found.count : null;
                 });
-
-                return {
-                    name: taxaName,
-                    type: 'bar',
-                    orientation: 'h',
-                    y: speciesNames,
-                    x: x_values,
-                    hovertemplate: '%{y}: %{x}<extra></extra>'
-                };
+                return { name: taxaName, type: 'bar', orientation: 'h', y: speciesNames, x: x_values, hovertemplate: '%{y}: %{x}<extra></extra>' };
             });
-
             const layout = {
-                title: {
-                    text: '<b>Top 20 Species by Observation Records</b>',
-                    font: { size: 20 }
-                },
-                barmode: 'stack',
-                height: chartHeight,
-                margin: {
-                    t: 100,
-                    b: 80,
-                    l: 240,
-                    r: 50
-                },
-                yaxis: {
-                    automargin: true,
-                    tickfont: { size: 14 }
-                },
-                xaxis: {
-                    title: {
-                        text: 'Number of Records',
-                        font: { size: 16 }
-                    }
-                },
-                legend: {
-                    orientation: 'h',
-                    yanchor: 'bottom',
-                    y: 1.02,
-                    xanchor: 'right',
-                    x: 1
-                }
+                title: { text: '<b>Top 20 Species by Observation Records</b>', font: { size: 20 } },
+                barmode: 'stack', height: chartHeight,
+                margin: { t: 100, b: 80, l: 240, r: 50 },
+                yaxis: { automargin: true, tickfont: { size: 14 } },
+                xaxis: { title: { text: 'Number of Records', font: { size: 16 } } },
+                legend: { orientation: 'h', yanchor: 'bottom', y: 1.02, xanchor: 'right', x: 1 }
             };
-
-            drawAndResizeChart('species-dist-container', traces, layout, plotlyConfig);
+            Plotly.newPlot('species-dist-container', traces, layout, plotlyConfig);
         }).fail(() => showErrorMessage('#species-dist-container', 'Could not load Species Distribution chart.'));
     }
 
     function updateTemporalChart(filters) {
         const container = $('#temporal-chart-container');
-        container.height(500);
+        container.height(500); 
         return $.get(`${API_BASE_URL}/api/summary/temporal_trends`, filters).done(data => {
             if (Object.keys(data).length === 0) { container.closest('.card').hide(); return; }
             container.closest('.card').show();
             container.empty();
-            const trace = [{
-                x: Object.keys(data).map(m => monthNames[parseInt(m)]),
-                y: Object.values(data),
-                type: 'bar'
-            }];
+            const trace = [{ x: Object.keys(data).map(m => monthNames[parseInt(m)]), y: Object.values(data), type: 'bar' }];
             const layout = { title: 'Observations by Month', yaxis: {title: 'Number of Records'}, margin: { t: 50, b: 40, l: 60, r: 20 } };
-            drawAndResizeChart('temporal-chart-container', trace, layout, plotlyConfig);
+            Plotly.newPlot('temporal-chart-container', trace, layout, plotlyConfig);
         }).fail(() => showErrorMessage('#temporal-chart-container', 'Could not load Temporal Trends chart.'));
     }
 
-    // Updated function from your local version
     function updateObserverChart(filters) {
         const container = $('#observer-chart-container');
         const observers = filters.obs ? filters.obs.split(',') : [];
-
-        if (observers.length === 0) {
-            container.closest('.card').hide();
-            return $.when();
-        }
-
+        if (observers.length === 0) { container.closest('.card').hide(); return $.when(); }
         container.closest('.card').show();
         container.empty();
         container.height(500);
@@ -425,76 +789,123 @@ $(document).ready(function() {
             const { obs, ...otherFilters } = filters;
             return $.get(`${API_BASE_URL}/api/summary/observer/${encodeURIComponent(observerName)}`, otherFilters)
                 .done(data => {
-                    if (!data || !data.specialization || Object.keys(data.specialization).length === 0) {
-                        container.closest('.card').hide();
-                        return;
-                    }
-
+                    if (!data || !data.specialization || Object.keys(data.specialization).length === 0) { container.closest('.card').hide(); return; }
                     const chartData = data.specialization;
                     const otherBreakdown = data.other_breakdown || {};
                     const labels = Object.keys(chartData);
                     const values = Object.values(chartData);
                     const total = values.reduce((sum, val) => sum + val, 0);
-
                     const hoverTexts = labels.map((label, i) => {
                         const value = values[i];
                         const percent = ((value / total) * 100).toFixed(2);
                         let hoverText = `<b>${label}</b><br>Count: ${value}<br>${percent}%`;
-
                         if (label === 'Other' && Object.keys(otherBreakdown).length > 0) {
                             hoverText += '<br><hr><i>Including:</i>';
-                            for (const [key, val] of Object.entries(otherBreakdown)) {
-                                hoverText += `<br>- ${key}: ${val}`;
-                            }
+                            for (const [key, val] of Object.entries(otherBreakdown)) hoverText += `<br>- ${key}: ${val}`;
                         }
                         return hoverText;
                     });
-
-                    const trace = [{
-                        type: 'pie',
-                        labels: labels,
-                        values: values,
-                        hole: .4,
-                        hoverinfo: 'text',
-                        text: hoverTexts,
-                        textinfo: 'none',
-                        automargin: true
-                    }];
-
-                    const layout = {
-                        title: `Taxonomic Specialization for ${observerName}`,
-                        showlegend: true,
-                        margin: { t: 50, b: 20, l: 20, r: 20 }
-                    };
-
-                    drawAndResizeChart('observer-chart-container', trace, layout, plotlyConfig);
+                    const trace = [{ type: 'pie', labels: labels, values: values, hole: .4, hoverinfo: 'text', text: hoverTexts, textinfo: 'none', automargin: true }];
+                    const layout = { title: `Taxonomic Specialization for ${observerName}`, showlegend: true, margin: { t: 50, b: 20, l: 20, r: 20 } };
+                    Plotly.newPlot('observer-chart-container', trace, layout, plotlyConfig);
                 }).fail(() => showErrorMessage('#observer-chart-container', 'Could not load Observer chart.'));
-        }
-        else {
+        } else {
             return $.get(`${API_BASE_URL}/api/summary/observer_comparison`, filters)
                 .done(data => {
-                    if (!data || Object.keys(data).length === 0) {
-                        container.closest('.card').hide();
-                        return;
-                    }
+                    if (!data || Object.keys(data).length === 0) { container.closest('.card').hide(); return; }
                     const taxaNames = Object.keys(data);
                     const observerNames = observers;
-                    const traces = taxaNames.map(taxa => ({
-                        x: observerNames,
-                        y: observerNames.map(obs => data[taxa][obs] || 0),
-                        name: taxa,
-                        type: 'bar'
-                    }));
-                    const layout = {
-                        barmode: 'stack',
-                        title: 'Observer Comparison by Taxa',
-                        xaxis: { title: 'Observer', automargin: true },
-                        yaxis: { title: 'Number of Records' },
-                        margin: { t: 50, b: 100, l: 60, r: 20 }
-                    };
-                    drawAndResizeChart('observer-chart-container', traces, layout, plotlyConfig);
+                    const traces = taxaNames.map(taxa => ({ x: observerNames, y: observerNames.map(obs => data[taxa][obs] || 0), name: taxa, type: 'bar' }));
+                    const layout = { barmode: 'stack', title: 'Observer Comparison by Taxa', xaxis: { title: 'Observer', automargin: true }, yaxis: { title: 'Number of Records' }, margin: { t: 50, b: 100, l: 60, r: 20 } };
+                    Plotly.newPlot('observer-chart-container', traces, layout, plotlyConfig);
                 }).fail(() => showErrorMessage('#observer-chart-container', 'Could not load Observer Comparison chart.'));
         }
+    }
+    function updateAnnualTrends() {
+        const container = $('#annual-trends-container');
+        container.append('<div class="loading-overlay"><span>Loading...</span></div>');
+
+        return $.get(`${API_BASE_URL}/api/summary/annual_trends`).done(data => {
+            if (!data.trends || data.trends.length === 0) {
+                showErrorMessage('#annual-trends-container', 'No yearly data available to generate a trend analysis.');
+                return;
+            }
+            annualData = data.trends;
+            
+            const tableBody = $('#annual-trends-table tbody').empty();
+            annualData.forEach(yearData => {
+                const row = `<tr>
+                    <td><b>${yearData.year}</b></td>
+                    <td>${yearData.total_records.toLocaleString()}</td>
+                    <td>${yearData.unique_species.toLocaleString()}</td>
+                    <td>${yearData.shannon}</td>
+                    <td>${yearData.simpson}</td>
+                </tr>`;
+                tableBody.append(row);
+            });
+            
+            drawAnnualChart('absolute');
+
+        }).fail(() => {
+            showErrorMessage('#annual-trends-container', 'Could not load annual trends.');
+        }).always(() => {
+            container.find('.loading-overlay').remove();
+        });
+    }
+    function drawAnnualChart(mode) {
+        if (annualData.length === 0) return;
+
+        const chartDiv = 'annual-trends-chart';
+        $('.toggle-buttons button').removeClass('active');
+        
+        let years = annualData.map(d => d.year);
+        let values;
+        let layout;
+
+        if (mode === 'absolute') {
+            $('#annual-absolute-btn').addClass('active');
+            values = annualData.map(d => d.unique_species);
+            layout = {
+                title: 'Total Unique Species per Year',
+                yaxis: { title: 'Number of Unique Species' },
+                xaxis: { type: 'category', title: 'Year' },
+                margin: { t: 50, b: 40, l: 60, r: 20 }
+            };
+        } else { 
+            $('#annual-standardized-btn').addClass('active');
+            const baseValue = annualData[0].unique_species;
+            values = baseValue > 0 ? annualData.map(d => (d.unique_species / baseValue) * 100) : annualData.map(d => 0);
+            layout = {
+                title: `Species Growth Index (First Year = 100)`,
+                yaxis: { title: 'Growth Index (%)', tickformat: '.0f' },
+                xaxis: { type: 'category', title: 'Year' },
+                margin: { t: 50, b: 40, l: 60, r: 20 }
+            };
+        }
+
+        const trace = [{ x: years, y: values, type: 'bar' }];
+        Plotly.newPlot(chartDiv, trace, layout, plotlyConfig);
+    }
+    function loadUniqueSpeciesTable(page = 1) {
+        const card = $('#unique-species-table').closest('.card');
+        card.append('<div class="loading-overlay"><span>Loading...</span></div>');
+        return $.get(`${API_BASE_URL}/api/all_unique_species`, { page: page, page_size: 10 }).done(data => {
+            const tableBody = $('#unique-species-table tbody').empty();
+            if (!data.species_list || data.species_list.length === 0) {
+                tableBody.append('<tr><td style="text-align:center; padding: 2em;">No species found.</td></tr>');
+            } else {
+                data.species_list.forEach(speciesName => tableBody.append(`<tr><td><em>${speciesName}</em></td></tr>`));
+            }
+            updateUniqueSpeciesPagination(data.total_pages, data.page);
+        }).fail(() => showErrorMessage('#unique-species-table tbody', 'Could not load the species list.'))
+          .always(() => card.find('.loading-overlay').remove());
+    }
+    function updateUniqueSpeciesPagination(totalPages, page) {
+        const container = $('#pagination-container').empty();
+        if (totalPages <= 1) return;
+        const prevButton = $('<button>« Previous</button>').on('click', () => loadUniqueSpeciesTable(page - 1)).prop('disabled', page === 1);
+        const nextButton = $('<button>Next »</button>').on('click', () => loadUniqueSpeciesTable(page + 1)).prop('disabled', page === totalPages);
+        container.append(prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton);
     }
 
     initializeDashboard();

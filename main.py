@@ -2,13 +2,15 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import json
 from fastapi import FastAPI, HTTPException
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
-from typing import Optional
+from fastapi.responses import Response, JSONResponse
+from typing import Optional, List
 from pathlib import Path
-from math import ceil
+from math import ceil, floor
+from scipy.stats import entropy
 
 app = FastAPI(title="Biodiversity Dashboard", version="1.0.0")
 
@@ -28,26 +30,42 @@ app.add_middleware(
 def read_root_head():
     return Response(status_code=200)
 
-DATA_PATH = Path(__file__).parent / "data" / "data.parquet"
+DATA_PATH = Path(__file__).parent / "data"
 df = None
 ALL_UNIQUE_SPECIES = []
 
 def load_data() -> pd.DataFrame:
-    """Load and preprocess the dataset."""
-    if not DATA_PATH.is_file():
-        print(f"ERROR: Data file not found: {DATA_PATH}", file=sys.stderr)
+    if not DATA_PATH.is_dir():
+        print(f"ERROR: Data directory not found: {DATA_PATH}", file=sys.stderr)
         raise FileNotFoundError(str(DATA_PATH))
 
-    _df = pd.read_parquet(DATA_PATH)
+    parquet_files = list(DATA_PATH.glob("*.parquet"))
+    if not parquet_files:
+        print(f"ERROR: No .parquet files found in directory: {DATA_PATH}", file=sys.stderr)
+        raise FileNotFoundError(f"No .parquet files in {DATA_PATH}")
+
+    df_list = [pd.read_parquet(file) for file in parquet_files]
+    _df = pd.concat(df_list, ignore_index=True)
+
     _df["Date"] = pd.to_datetime(_df["Date"])
     _df["year"] = _df["Date"].dt.year
     _df["month"] = _df["Date"].dt.month
     if "Taxa" in _df.columns:
         _df = _df.rename(columns={"Taxa": "taxa"})
+    
+    if 'latitude' in _df.columns:
+        _df['latitude'] = pd.to_numeric(_df['latitude'], errors='coerce')
+    if 'longitude' in _df.columns:
+        _df['longitude'] = pd.to_numeric(_df['longitude'], errors='coerce')
+    
+    _df.reset_index(inplace=True)
+    _df = _df.rename(columns={'index': 'id'})
+        
     return _df
 
 try:
     df = load_data()
+    df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
     ALL_UNIQUE_SPECIES = sorted(df['species'].dropna().unique().tolist())
 except Exception as e:
     raise RuntimeError(f"Failed to load dataset: {e}") from e
@@ -60,6 +78,7 @@ def apply_filters(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ) -> pd.DataFrame:
     if english_name:
         query_df = query_df[query_df["english_name"].isin(english_name.split(","))]
@@ -73,6 +92,17 @@ def apply_filters(
         query_df = query_df[query_df["year"] == int(year)]
     if month:
         query_df = query_df[query_df["month"] == int(month)]
+    if bbox:
+        try:
+            xmin, ymin, xmax, ymax = map(float, bbox.split(','))
+            query_df = query_df[
+                (query_df['longitude'] >= xmin) &
+                (query_df['longitude'] <= xmax) &
+                (query_df['latitude'] >= ymin) &
+                (query_df['latitude'] <= ymax)
+            ]
+        except (ValueError, IndexError):
+            pass
     return query_df
 
 def _get_options(df_source: pd.DataFrame, key_name: str):
@@ -86,7 +116,16 @@ def root():
 def health():
     return {"ok": True}
 
-# New endpoint from your local version
+@app.get("/api/habitat_polygons")
+def get_habitat_polygons():
+    habitat_file = DATA_PATH / "habitats.geojson"
+    if not habitat_file.is_file():
+        raise HTTPException(status_code=404, detail="Habitat data not found. Please run the conversion script.")
+    
+    with open(habitat_file, 'r') as f:
+        data = json.load(f)
+    return JSONResponse(content=data)
+
 @app.get("/api/all_unique_species")
 def get_all_unique_species(page: int = 1, page_size: int = 10):
     total_species = len(ALL_UNIQUE_SPECIES)
@@ -143,8 +182,9 @@ def get_records(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month)
+    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
     total_records = len(query_df)
     paginated_data = query_df.iloc[(page - 1) * page_size : page * page_size].copy()
     paginated_data = (
@@ -161,6 +201,56 @@ def get_records(
         }
     )
 
+@app.get("/api/record_page")
+def get_record_page(
+    record_id: int,
+    page_size: int = 100,
+    english_name: Optional[str] = None,
+    species: Optional[str] = None,
+    obs: Optional[str] = None,
+    taxa: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    bbox: Optional[str] = None,
+):
+    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    
+    try:
+        indices = query_df.index.tolist()
+        record_original_index = df.loc[df['id'] == record_id].index[0]
+        position = indices.index(record_original_index)
+        
+        page = floor(position / page_size) + 1
+        return {"page": page}
+    except (IndexError, ValueError):
+        raise HTTPException(status_code=404, detail="Record not found in the current filter context.")
+
+
+@app.get("/api/map_data")
+def get_map_data(
+    english_name: Optional[str] = None,
+    species: Optional[str] = None,
+    obs: Optional[str] = None,
+    taxa: Optional[str] = None,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    bbox: Optional[str] = None,
+):
+    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    
+    map_df = query_df.dropna(subset=['latitude', 'longitude']).copy()
+    map_df = map_df[['id', 'english_name', 'species', 'obs', 'Date', 'taxa', 'latitude', 'longitude']]
+    
+    map_df = (
+        map_df.replace([np.inf, -np.inf], None)
+        .astype(object)
+        .where(pd.notnull(map_df), None)
+    )
+    
+    records = map_df.to_dict(orient="records")
+    return JSONResponse(content=jsonable_encoder(records))
+
+
 @app.get("/api/summary/diversity")
 def get_diversity_summary(
     english_name: Optional[str] = None,
@@ -169,15 +259,14 @@ def get_diversity_summary(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ):
-    from scipy.stats import entropy
-
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month)
+    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
     species_counts = query_df.groupby("species")["count"].sum() if not query_df.empty else pd.Series(dtype=float)
     species_richness = len(species_counts)
 
-    if query_df.empty or query_df["count"].sum() == 0 or species_richness <= 1:
-        return {"shannon": 0, "simpson": 0, "species_richness": species_richness}
+    if query_df.empty or "count" not in query_df.columns or query_df["count"].sum() == 0 or species_richness <= 1:
+        return {"shannon": 0, "simpson": 0, "species_richness": species_richness, "total_records": len(query_df)}
 
     proportions = species_counts[species_counts > 0] / species_counts.sum()
     shannon_index = entropy(proportions, base=np.e)
@@ -187,7 +276,37 @@ def get_diversity_summary(
         "shannon": round(float(shannon_index), 3),
         "simpson": round(float(gini_simpson_index), 3),
         "species_richness": int(species_richness),
+        "total_records": len(query_df)
     }
+
+@app.get("/api/summary/annual_trends")
+def get_annual_trends():
+    if 'year' not in df.columns or df['year'].isnull().all():
+        return {"trends": []}
+
+    yearly_data = []
+    for year, group in sorted(df.groupby('year'), key=lambda x: x[0]):
+        species_counts = group.groupby("species")["count"].sum()
+        species_richness = len(species_counts)
+        total_records = len(group)
+
+        shannon_index = 0
+        gini_simpson_index = 0
+
+        if not group.empty and "count" in group.columns and group["count"].sum() > 0 and species_richness > 1:
+            proportions = species_counts[species_counts > 0] / species_counts.sum()
+            shannon_index = entropy(proportions, base=np.e)
+            gini_simpson_index = 1 - (proportions**2).sum()
+
+        yearly_data.append({
+            "year": int(year),
+            "total_records": int(total_records),
+            "unique_species": int(species_richness),
+            "shannon": round(float(shannon_index), 3),
+            "simpson": round(float(gini_simpson_index), 3),
+        })
+    
+    return {"trends": yearly_data}
 
 @app.get("/api/summary/species_distribution")
 def get_species_distribution(
@@ -197,8 +316,9 @@ def get_species_distribution(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month)
+    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return []
 
@@ -206,7 +326,6 @@ def get_species_distribution(
     top_20_names = species_counts.nlargest(20).index.tolist()
 
     top_20_df = query_df[query_df['english_name'].isin(top_20_names)]
-
     taxa_map = top_20_df.groupby('english_name')['taxa'].first()
 
     result = []
@@ -227,8 +346,9 @@ def get_temporal_trends(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month)
+    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return {}
     summary = query_df.groupby("month").size().reindex(range(1, 13), fill_value=0)
@@ -242,10 +362,11 @@ def get_observer_comparison(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ):
     if not obs:
         return {}
-    query_df = apply_filters(df.copy(), english_name, species, taxa=taxa, year=year, month=month)
+    query_df = apply_filters(df.copy(), english_name, species, taxa=taxa, year=year, month=month, bbox=bbox)
     query_df = query_df[query_df["obs"].isin(obs.split(","))]
     if query_df.empty:
         return {}
@@ -260,8 +381,9 @@ def get_observer_stats(
     taxa: Optional[str] = None,
     year: Optional[int] = None,
     month: Optional[int] = None,
+    bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, None, taxa, year, month)
+    query_df = apply_filters(df.copy(), english_name, species, None, taxa, year, month, bbox)
     observer_df = query_df[query_df["obs"] == observer_name]
 
     if observer_df.empty:
