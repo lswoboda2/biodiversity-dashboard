@@ -46,7 +46,8 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add data.parquet species_api_cache.csv
+          # --- CHANGED: The path to data.parquet now includes the 'data/' directory. ---
+          git add data/data.parquet species_api_cache.csv
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else

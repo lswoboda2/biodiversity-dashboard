@@ -16,8 +16,8 @@ else:
     sys.exit(1)
 
 SPECIES_CSV_PATH = 'species list.csv'
-API_CACHE_PATH = 'species_api_cache.csv'  
-OUTPUT_PARQUET_PATH = 'data.parquet'
+API_CACHE_PATH = 'species_api_cache.csv'
+OUTPUT_PARQUET_PATH = 'data/data.parquet'
 
 def find_best_layer(gpkg_path: str) -> str | None:
     """
@@ -246,6 +246,10 @@ def main():
 
     print("\nSaving Final Output")
     try:
+        output_dir = os.path.dirname(OUTPUT_PARQUET_PATH)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        
         gdf.to_parquet(OUTPUT_PARQUET_PATH, index=False)
         print(f"Saved data to '{OUTPUT_PARQUET_PATH}' with {len(gdf)} rows.")
     except Exception as e:

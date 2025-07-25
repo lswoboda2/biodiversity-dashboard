@@ -28,7 +28,7 @@ app.add_middleware(
 def read_root_head():
     return Response(status_code=200)
 
-DATA_PATH = Path(__file__).parent / "data.parquet"
+DATA_PATH = Path(__file__).parent / "data" / "data.parquet"
 df = None
 ALL_UNIQUE_SPECIES = []
 
