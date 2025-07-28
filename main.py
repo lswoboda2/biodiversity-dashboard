@@ -47,6 +47,10 @@ def load_data() -> pd.DataFrame:
     df_list = [pd.read_parquet(file) for file in parquet_files]
     _df = pd.concat(df_list, ignore_index=True)
 
+    for col in ["english_name", "species", "obs", "taxa"]:
+        if col in _df.columns:
+            _df[col] = _df[col].astype("category")
+
     _df["Date"] = pd.to_datetime(_df["Date"])
     _df["year"] = _df["Date"].dt.year
     _df["month"] = _df["Date"].dt.month
@@ -184,7 +188,7 @@ def get_records(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     total_records = len(query_df)
     paginated_data = query_df.iloc[(page - 1) * page_size : page * page_size].copy()
     paginated_data = (
@@ -213,7 +217,7 @@ def get_record_page(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     
     try:
         indices = query_df.index.tolist()
@@ -236,7 +240,7 @@ def get_map_data(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     
     map_df = query_df.dropna(subset=['latitude', 'longitude']).copy()
     map_df = map_df[['id', 'english_name', 'species', 'obs', 'Date', 'taxa', 'latitude', 'longitude']]
@@ -261,8 +265,8 @@ def get_diversity_summary(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
-    species_counts = query_df.groupby("species")["count"].sum() if not query_df.empty else pd.Series(dtype=float)
+    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
+    species_counts = query_df.groupby("species", observed=True)["count"].sum() if not query_df.empty else pd.Series(dtype=float)
     species_richness = len(species_counts)
 
     if query_df.empty or "count" not in query_df.columns or query_df["count"].sum() == 0 or species_richness <= 1:
@@ -286,7 +290,7 @@ def get_annual_trends():
 
     yearly_data = []
     for year, group in sorted(df.groupby('year'), key=lambda x: x[0]):
-        species_counts = group.groupby("species")["count"].sum()
+        species_counts = group.groupby("species", observed=True)["count"].sum()
         species_richness = len(species_counts)
         total_records = len(group)
 
@@ -318,7 +322,7 @@ def get_species_distribution(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return []
 
@@ -326,7 +330,7 @@ def get_species_distribution(
     top_20_names = species_counts.nlargest(20).index.tolist()
 
     top_20_df = query_df[query_df['english_name'].isin(top_20_names)]
-    taxa_map = top_20_df.groupby('english_name')['taxa'].first()
+    taxa_map = top_20_df.groupby('english_name', observed=True)['taxa'].first()
 
     result = []
     for name in top_20_names:
@@ -348,7 +352,7 @@ def get_temporal_trends(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, obs, taxa, year, month, bbox)
+    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return {}
     summary = query_df.groupby("month").size().reindex(range(1, 13), fill_value=0)
@@ -366,11 +370,11 @@ def get_observer_comparison(
 ):
     if not obs:
         return {}
-    query_df = apply_filters(df.copy(), english_name, species, taxa=taxa, year=year, month=month, bbox=bbox)
+    query_df = apply_filters(df, english_name, species, taxa=taxa, year=year, month=month, bbox=bbox)
     query_df = query_df[query_df["obs"].isin(obs.split(","))]
     if query_df.empty:
         return {}
-    comparison = query_df.groupby(["obs", "taxa"]).size().unstack(fill_value=0)
+    comparison = query_df.groupby(["obs", "taxa"], observed=True).size().unstack(fill_value=0)
     return comparison.to_dict(orient="dict")
 
 @app.get("/api/summary/observer/{observer_name}")
@@ -383,13 +387,13 @@ def get_observer_stats(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    query_df = apply_filters(df.copy(), english_name, species, None, taxa, year, month, bbox)
+    query_df = apply_filters(df, english_name, species, None, taxa, year, month, bbox)
     observer_df = query_df[query_df["obs"] == observer_name]
 
     if observer_df.empty:
         return {}
 
-    specialization = observer_df.groupby('taxa').size().sort_values(ascending=False)
+    specialization = observer_df.groupby('taxa', observed=True).size().sort_values(ascending=False)
     other_breakdown = {}
 
     if len(specialization) > 20:

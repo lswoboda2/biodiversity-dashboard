@@ -305,7 +305,6 @@ $(document).ready(function() {
         const legendContainer = L.control({position: 'bottomright'});
         legendContainer.onAdd = function(map) {
             const div = L.DomUtil.create('div', 'legend-container');
-            // THE FIX: Add event listeners to stop propagation
             L.DomEvent.disableClickPropagation(div);
             L.DomEvent.disableScrollPropagation(div);
             
@@ -901,7 +900,8 @@ $(document).ready(function() {
           .always(() => card.find('.loading-overlay').remove());
     }
     function updateUniqueSpeciesPagination(totalPages, page) {
-        const container = $('#pagination-container').empty();
+        // --- THIS IS THE CRITICAL FIX FOR THE PAGINATION ---
+        const container = $('#unique-species-pagination').empty();
         if (totalPages <= 1) return;
         const prevButton = $('<button>« Previous</button>').on('click', () => loadUniqueSpeciesTable(page - 1)).prop('disabled', page === 1);
         const nextButton = $('<button>Next »</button>').on('click', () => loadUniqueSpeciesTable(page + 1)).prop('disabled', page === totalPages);
