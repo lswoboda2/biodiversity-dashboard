@@ -68,6 +68,7 @@
         .toggle-buttons button { background-color: var(--secondary-color); }
         .toggle-buttons button.active { background-color: var(--primary-color); }
 
+        /* Map and Legend specific styles */
         #map-container { height: 600px; border-radius: 8px; }
         .legend-container {
             background: rgba(255,255,255,0.9);
@@ -279,9 +280,7 @@ $(document).ready(function() {
         const habitatPromise = loadHabitatLayer();
         const initialUpdatePromise = updateFilterOptions().then(updateAllDashboardComponents);
         
-        // --- NEW ---
         updateHabitatSummary(); 
-        // --- END NEW ---
 
         updateAnnualTrends();
         loadUniqueSpeciesTable(1);
@@ -672,7 +671,8 @@ $(document).ready(function() {
                 tableBody.append('<tr><td colspan="8" style="text-align:center; padding: 2em;">No records found.</td></tr>');
             } else {
                 data.records.forEach(row => {
-                    const tableRow = `<tr data-record-id="${row.id}"><td class="wrap-text" title="${row.english_name || ''}">${row.english_name || ''}</td><td>${row.species || ''}</td><td>${row.obs || ''}</td><td>${row.Date ? new Date(row.Date).toLocaleDateString() : ''}</td><td>${row.count || ''}</td><td>${row.taxa || ''}</td><td>${row.latitude || ''}</td><td>${row.longitude || ''}</td></tr>`;
+                    const formattedDate = row.Date ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(row.Date)) : '';
+                    const tableRow = `<tr data-record-id="${row.id}"><td class="wrap-text" title="${row.english_name || ''}">${row.english_name || ''}</td><td>${row.species || ''}</td><td>${row.obs || ''}</td><td>${formattedDate}</td><td>${row.count || ''}</td><td>${row.taxa || ''}</td><td>${row.latitude || ''}</td><td>${row.longitude || ''}</td></tr>`;
                     tableBody.append(tableRow);
                 });
             }
@@ -725,9 +725,13 @@ $(document).ready(function() {
     function updatePagination(totalPages, page, filters) {
         const container = $('#pagination-container').empty();
         if (totalPages <= 1) return;
+
+        const firstButton = $('<button>First</button>').on('click', () => loadTable(filters, 1)).prop('disabled', page === 1);
         const prevButton = $('<button>« Previous</button>').on('click', () => loadTable(filters, page - 1)).prop('disabled', page === 1);
         const nextButton = $('<button>Next »</button>').on('click', () => loadTable(filters, page + 1)).prop('disabled', page === totalPages);
-        container.append(prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton);
+        const lastButton = $('<button>Last</button>').on('click', () => loadTable(filters, totalPages)).prop('disabled', page === totalPages);
+
+        container.append(firstButton, prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton, lastButton);
     }
 
     function updateSummaryStats(filters) {
@@ -738,19 +742,53 @@ $(document).ready(function() {
         }).fail(() => $('#unique-species, #shannon-index, #simpson-index').text('Error'));
     }
 
-    // --- NEW ---
     function updateHabitatSummary() {
         const container = $('#habitat-summary-container');
         container.append('<div class="loading-overlay"><span>Loading...</span></div>');
 
-        return $.get(`${API_BASE_URL}/api/summary/habitat`).done(data => {
+        $.when(
+            $.get(`${API_BASE_URL}/api/summary/habitat`),
+            $.get(`${API_BASE_URL}/api/summary/management_biodiversity`)
+        ).done(function(habitatResponse, managementResponse) {
+            const habitatData = habitatResponse[0];
+            const managementData = managementResponse[0];
+
+            if (!habitatData || !habitatData.summary) {
+                showErrorMessage('#habitat-summary-table tbody', 'Could not load main habitat summary.');
+                return;
+            }
+
+            let combinedSummary = habitatData.summary;
+            
+            if (managementData) {
+                for (const [name, values] of Object.entries(managementData)) {
+                    combinedSummary.push({
+                        habitat: name, 
+                        areaha: values.area_ha || 0,
+                        no10sq: values.no_10m_sq || 0,
+                        percent: 0, 
+                        no10sq_percent: 0 
+                    });
+                }
+            }
+
+            const total_area_ha = combinedSummary.reduce((sum, row) => sum + row.areaha, 0);
+            const total_no10sq = combinedSummary.reduce((sum, row) => sum + row.no10sq, 0);
+
+            combinedSummary.forEach(row => {
+                row.percent = total_area_ha > 0 ? (row.areaha / total_area_ha) * 100 : 0;
+                row.no10sq_percent = total_no10sq > 0 ? (row.no10sq / total_no10sq) * 100 : 0;
+            });
+
+            combinedSummary.sort((a, b) => a.habitat.localeCompare(b.habitat));
+
             const tableBody = $('#habitat-summary-table tbody').empty();
-            if (!data.summary || data.summary.length === 0) {
+            if (combinedSummary.length === 0) {
                 tableBody.append('<tr><td colspan="5" style="text-align:center; padding: 2em;">No habitat data available.</td></tr>');
                 return;
             }
 
-            data.summary.forEach(row => {
+            combinedSummary.forEach(row => {
                 const tableRow = `<tr>
                     <td><b>${row.habitat}</b></td>
                     <td>${row.areaha.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
@@ -761,24 +799,21 @@ $(document).ready(function() {
                 tableBody.append(tableRow);
             });
 
-            // Add Total Row
-            const totals = data.totals;
             const totalRow = `<tr style="font-weight: bold; background-color: var(--light-gray);">
                 <td>Total</td>
-                <td>${totals.total_area_ha.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td>${total_area_ha.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                 <td>100.0%</td>
-                <td>${totals.total_no10sq.toLocaleString()}</td>
+                <td>${total_no10sq.toLocaleString()}</td>
                 <td>100.0%</td>
             </tr>`;
             tableBody.append(totalRow);
 
         }).fail(() => {
-            showErrorMessage('#habitat-summary-table tbody', 'Could not load habitat summary.');
+            showErrorMessage('#habitat-summary-table tbody', 'Could not load habitat summary data from the server.');
         }).always(() => {
             container.find('.loading-overlay').remove();
         });
     }
-    // --- END NEW ---
 
     function stringToColor(str) {
         let hash = 0;
@@ -967,9 +1002,13 @@ $(document).ready(function() {
     function updateUniqueSpeciesPagination(totalPages, page) {
         const container = $('#unique-species-pagination').empty();
         if (totalPages <= 1) return;
+
+        const firstButton = $('<button>First</button>').on('click', () => loadUniqueSpeciesTable(1)).prop('disabled', page === 1);
         const prevButton = $('<button>« Previous</button>').on('click', () => loadUniqueSpeciesTable(page - 1)).prop('disabled', page === 1);
         const nextButton = $('<button>Next »</button>').on('click', () => loadUniqueSpeciesTable(page + 1)).prop('disabled', page === totalPages);
-        container.append(prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton);
+        const lastButton = $('<button>Last</button>').on('click', () => loadUniqueSpeciesTable(totalPages)).prop('disabled', page === totalPages);
+        
+        container.append(firstButton, prevButton, `<span> Page ${page} of ${totalPages} </span>`, nextButton, lastButton);
     }
 
     initializeDashboard();

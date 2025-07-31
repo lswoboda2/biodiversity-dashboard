@@ -163,7 +163,7 @@ def get_habitat_summary(year: Optional[int] = None):
         return {"summary": [], "totals": {"total_area_ha": 0, "total_no10sq": 0}}
 
     habitat_file = DATA_PATH / "habitats.geojson"
-    metrics_file = DATA_PATH / "habitat_metrics.json" 
+    metrics_file = DATA_PATH / "habitat_metrics.json"
 
     if not habitat_file.is_file() or not metrics_file.is_file():
         raise HTTPException(status_code=404, detail="Habitat data or metrics file not found.")
@@ -191,13 +191,11 @@ def get_habitat_summary(year: Optional[int] = None):
 
     summary_list = []
     total_no10sq = sum(habitat_metrics.values())
-
     all_habitats = sorted(list(set(habitat_areas.keys()) | set(habitat_metrics.keys())))
 
     for habitat in all_habitats:
         area_m2 = habitat_areas.get(habitat, 0)
         no10sq = habitat_metrics.get(habitat, 0)
-
         area_ha = area_m2 / 10000
         percent_area = (area_m2 / total_area_m2) * 100 if total_area_m2 > 0 else 0
         percent_sq = (no10sq / total_no10sq) * 100 if total_no10sq > 0 else 0
@@ -217,6 +215,16 @@ def get_habitat_summary(year: Optional[int] = None):
             "total_no10sq": total_no10sq
         }
     }
+
+@app.get("/api/summary/management_biodiversity")
+def get_management_biodiversity_summary():
+    metrics_file = DATA_PATH / "3gpkg_metrics.json"
+    if not metrics_file.is_file():
+        raise HTTPException(status_code=404, detail="Special habitat metrics file not found. Please run the calculation script.")
+    
+    with open(metrics_file, 'r') as f:
+        data = json.load(f)
+    return JSONResponse(content=data)
 
 @app.get("/api/all_unique_species")
 def get_all_unique_species(page: int = 1, page_size: int = 10):
