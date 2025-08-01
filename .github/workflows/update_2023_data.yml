@@ -1,0 +1,57 @@
+name: Update 2023 Parquet Data from Google Drive
+
+on:
+  repository_dispatch:
+    types: [new-2023-gpkg-file]
+
+jobs:
+  build-and-commit-2023:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GDAL and other dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin libgdal-dev
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade pip
+          pip install --upgrade "gdown>=4.7.0"
+          pip install -r requirements.txt
+      
+      - name: Install Google API Python Client
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Authenticate to Google Drive
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+
+      - name: Download .gpkg file from Google Drive (service account)
+        run: python download_from_gdrive.py "${{ github.event.client_payload.file_id }}" "data-2023.gpkg"
+      
+      - name: Run 2023 data conversion script
+
+        run: python 2023gpkgtoparquet.py data-2023.gpkg data/2023data.parquet "species list.csv"
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/2023data.parquet
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Chore: Update 2023 Parquet data"
+            git push
+          fi
