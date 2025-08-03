@@ -1,0 +1,60 @@
+name: Update 3gpkg Metrics from Google Drive
+
+on:
+  repository_dispatch:
+    types: [run-3gpkg-metrics]
+
+jobs:
+  build-and-commit-3gpkg:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GDAL and other dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin libgdal-dev
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade pip
+          pip install --upgrade "gdown>=4.7.0"
+          pip install geopandas shapely
+          pip install -r requirements.txt
+      
+      - name: Install Google API Python Client
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Authenticate to Google Drive
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+
+      - name: Download Required GPKG Files from Google Drive
+        run: |
+          python download_from_gdrive.py "${{ github.event.client_payload.meadows_id }}" "Meadows.gpkg"
+          python download_from_gdrive.py "${{ github.event.client_payload.woodland_id }}" "Woodland & Copses.gpkg"
+          python download_from_gdrive.py "${{ github.event.client_payload.hedgerows_id }}" "Hedgerows.gpkg"
+      
+      - name: Run 3gpkg metrics calculation script
+        run: python calculate3gpkgmetrics.py "Meadows.gpkg" "Woodland & Copses.gpkg" "Hedgerows.gpkg" "data/3gpkg_metrics.json"
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/3gpkg_metrics.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Chore: Update 3gpkg habitat metrics"
+            git push
+          fi
