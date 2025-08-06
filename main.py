@@ -121,110 +121,37 @@ def health():
     return {"ok": True}
 
 @app.get("/api/habitat_polygons")
-def get_habitat_polygons():
-    habitat_file = DATA_PATH / "habitats.geojson"
+def get_habitat_polygons(year: Optional[str] = "2024-25"):
+    """
+    Serves a pre-generated, year-specific GeoJSON file for the map.
+    Defaults to the latest year if none is specified.
+    """
+    habitat_file = DATA_PATH / f"habitats_{year}.geojson"
     if not habitat_file.is_file():
-        raise HTTPException(status_code=404, detail="Habitat data not found. Please run the conversion script.")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Habitat data for year {year} not found. Please run the conversion script."
+        )
     
     with open(habitat_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
-
-HABITAT_CLASSIFICATION_MAP = {
-    "garden": ['c1f6', 'c1f7', 'Suburban mosaic vegetation', 'Gardens'],
-    "freshwater": ['f2d', 'Aquatic marginal vegetation', 'Reeds', 'rivers', 'Ponds'],
-    "natural grassland": ['g3c5', 'tall grassland/meadows', 's3a7'],
-    "modified grassland": ['g4', 'Modified grassland'],
-    "intertidal mudflat": ['t2d5'],
-    "hedge": ['h2b', 'Hedges/hedgerows'],
-    "buildings": ['u1e', 'Buildings'],
-    "other developed land": ['u1b6', 'Other developed land'],
-    "unsealed unvegetated surface": ['u1c', 'u1d', 'Artificial unvegetated, unsealed surface', 'Soft path'],
-    "woodland": ['w1g7', 'broadleaved woodland', 'coniferous woodland', 'Line of trees', 'mixed woodland']
-}
-REVERSE_HABITAT_MAP = {value.lower(): key for key, values in HABITAT_CLASSIFICATION_MAP.items() for value in values}
-
-def classify_habitat(properties: dict) -> str:
-    broad_classification = properties.get("habitat classification (broad)")
-    
-    if broad_classification and isinstance(broad_classification, str) and broad_classification.lower() != 'unknown':
-        source_value = broad_classification
-    else:
-        source_value = properties.get("UK habitat primary classification")
-
-    if not source_value or not isinstance(source_value, str):
-        return "Other"
-
-    return REVERSE_HABITAT_MAP.get(source_value.lower(), "Other")
 
 @app.get("/api/summary/habitat")
-def get_habitat_summary(year: Optional[int] = None):
-    if year and year != 2025:
-        return {"summary": [], "totals": {"total_area_ha": 0, "total_no10sq": 0}}
-
-    habitat_file = DATA_PATH / "habitats.geojson"
-    metrics_file = DATA_PATH / "habitat_metrics.json"
-
-    if not habitat_file.is_file() or not metrics_file.is_file():
-        raise HTTPException(status_code=404, detail="Habitat data or metrics file not found.")
-
-    with open(metrics_file, 'r') as f:
-        habitat_metrics = json.load(f)
-    
-    with open(habitat_file, 'r') as f:
-        geojson_data = json.load(f)
-
-    habitat_areas = {}
-    total_area_m2 = 0
-
-    for feature in geojson_data.get("features", []):
-        properties = feature.get("properties", {})
-        area = properties.get("newarea") or 0
-        if area > 0:
-            habitat_name = classify_habitat(properties)
-            habitat_areas.setdefault(habitat_name, 0)
-            habitat_areas[habitat_name] += area
-            total_area_m2 += area
-    
-    if total_area_m2 == 0:
-        return {"summary": [], "totals": {"total_area_ha": 0, "total_no10sq": 0}}
-
-    summary_list = []
-    total_no10sq = sum(habitat_metrics.values())
-    all_habitats = sorted(list(set(habitat_areas.keys()) | set(habitat_metrics.keys())))
-
-    for habitat in all_habitats:
-        area_m2 = habitat_areas.get(habitat, 0)
-        no10sq = habitat_metrics.get(habitat, 0)
-        area_ha = area_m2 / 10000
-        percent_area = (area_m2 / total_area_m2) * 100 if total_area_m2 > 0 else 0
-        percent_sq = (no10sq / total_no10sq) * 100 if total_no10sq > 0 else 0
-        
-        summary_list.append({
-            "habitat": habitat.replace("_", " ").title(),
-            "areaha": round(area_ha, 2),
-            "percent": round(percent_area, 1),
-            "no10sq": no10sq,
-            "no10sq_percent": round(percent_sq, 1)
-        })
-
-    return {
-        "summary": summary_list,
-        "totals": {
-            "total_area_ha": round(total_area_m2 / 10000, 2),
-            "total_no10sq": total_no10sq
-        }
-    }
-
-@app.get("/api/summary/management_biodiversity")
-def get_management_biodiversity_summary():
-    metrics_file = DATA_PATH / "3gpkg_metrics.json"
-    if not metrics_file.is_file():
-        raise HTTPException(status_code=404, detail="Special habitat metrics file not found. Please run the calculation script.")
-    
-    with open(metrics_file, 'r') as f:
+def get_habitat_summary():
+    """
+    Serves the pre-processed habitat summary data for the main table.
+    """
+    summary_file = DATA_PATH / "habitat_summary.json"
+    if not summary_file.is_file():
+        raise HTTPException(
+            status_code=404, 
+            detail="Habitat summary file not found. Please run the processing script."
+        )
+    with open(summary_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
+
 
 @app.get("/api/all_unique_species")
 def get_all_unique_species(page: int = 1, page_size: int = 10):

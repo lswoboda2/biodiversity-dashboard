@@ -51,7 +51,7 @@
         .table-wrapper { width: 100%; overflow-x: auto; }
         table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
         th, td { border: 1px solid var(--border-color); padding: 10px; text-align: left; }
-        th { background-color: var(--light-gray); }
+        th { background-color: var(--light-gray); text-align: center; }
         td.wrap-text { white-space: normal; word-break: break-word; max-width: 250px; }
         tr.highlighted { background-color: var(--highlight-color) !important; }
         button { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; }
@@ -70,6 +70,9 @@
 
         /* Map and Legend specific styles */
         #map-container { height: 600px; border-radius: 8px; }
+        .map-controls { padding: 0 1.5em 1.5em 1.5em; display: flex; gap: 1em; align-items: center; }
+        .map-controls label { font-weight: bold; }
+        .map-controls select { padding: 8px; border-radius: 5px; border: 1px solid var(--border-color); }
         .legend-container {
             background: rgba(255,255,255,0.9);
             box-shadow: 0 1px 5px rgba(0,0,0,0.4);
@@ -98,7 +101,7 @@
             transition: max-height 0.3s ease-in-out;
         }
         .legend-accordion-content.show {
-            max-height: 250px; 
+            max-height: 250px; /* Max height before scrolling */
             overflow-y: auto;
         }
         .legend-controls {
@@ -126,10 +129,9 @@
             font-size: 1em;
         }
         .legend-item input { margin-right: 10px; }
-        .legend-item i {
+        .legend-swatch {
             width: 20px; height: 20px;
             float: left; margin-right: 10px;
-            opacity: 0.9; border-radius: 50%;
             border: 1px solid #777;
         }
         .leaflet-popup-content-wrapper { border-radius: 5px; }
@@ -169,6 +171,13 @@
 
     <h2>Live Map</h2>
     <div class="card" style="padding: 0;">
+        <div class="map-controls">
+            <label for="habitat-year-filter">Habitat Year:</label>
+            <select id="habitat-year-filter">
+                <option value="2024-25" selected>2024-25</option>
+                <option value="2023-24">2023-24</option>
+            </select>
+        </div>
         <div id="map-container"></div>
     </div>
 
@@ -176,17 +185,8 @@
     <div class="card" id="habitat-summary-container" style="padding: 0; position: relative;">
         <div class="table-wrapper" style="padding: 1.5em;">
             <table id="habitat-summary-table">
-                <thead>
-                    <tr>
-                        <th>Habitat</th>
-                        <th>Area (ha)</th>
-                        <th>Area (%)</th>
-                        <th>No. 10m Squares</th>
-                        <th>Squares (%)</th>
-                    </tr>
-                </thead>
-                <tbody>
-                </tbody>
+                <thead></thead>
+                <tbody></tbody>
             </table>
         </div>
     </div>
@@ -249,7 +249,8 @@ $(document).ready(function() {
     let geographicFilter = null;
     
     let markerLayers = {}, taxaLayerGroups = {}, taxaColors = {}, taxaVisibilityState = {};
-    let habitatColors = {}, habitatLayerGroups = {}, habitatVisibilityState = {};
+    let habitatLayer = null; 
+    let habitatLayerGroups = {}, habitatVisibilityState = {};
     let habitatBounds = null, speciesBounds = null;
 
     function initializeDashboard() {
@@ -276,16 +277,17 @@ $(document).ready(function() {
         $(document).on('change', '.legend-item input[type="checkbox"]', handleLegendToggle);
         $(document).on('click', '.legend-controls a', handleLegendControls);
         $(document).on('click', '.legend-accordion-header', handleAccordionToggle);
+        $('#habitat-year-filter').on('change', () => loadHabitatLayer());
 
-        const habitatPromise = loadHabitatLayer();
         const initialUpdatePromise = updateFilterOptions().then(updateAllDashboardComponents);
         
         updateHabitatSummary(); 
-
         updateAnnualTrends();
         loadUniqueSpeciesTable(1);
 
-        $.when(habitatPromise, initialUpdatePromise).done(checkAndFitBounds);
+        loadHabitatLayer().then(() => {
+            $.when(initialUpdatePromise).done(checkAndFitBounds);
+        });
     }
 
     function initializeMap() {
@@ -361,95 +363,154 @@ $(document).ready(function() {
     }
 
     function loadHabitatLayer() {
-        return $.get(`${API_BASE_URL}/api/habitat_polygons`).done(data => {
+        const selectedYear = $('#habitat-year-filter').val();
+        if (habitatLayer) {
+            map.removeLayer(habitatLayer);
+            habitatLayer = null;
+        }
+        
+        return $.get(`${API_BASE_URL}/api/habitat_polygons`, { year: selectedYear }).done(data => {
             if (!data || !data.features) {
                 $('#habitat-legend').hide();
                 return;
             }
 
-            const UNKNOWN_HABITAT = "Unknown Habitat";
-            const classifications = [...new Set(data.features.map(f => f.properties['habitat classification (broad)'] || UNKNOWN_HABITAT))].sort();
-            
+            const classifications = [...new Set(data.features.map(f => f.properties['broad'] || "Unknown"))].sort();
             habitatLayerGroups = {};
             classifications.forEach(name => {
                 habitatLayerGroups[name] = L.layerGroup();
                 if (habitatVisibilityState[name] === undefined) {
                     habitatVisibilityState[name] = true;
                 }
-                if (!habitatColors[name]) {
-                    habitatColors[name] = stringToColor(name);
-                }
             });
 
-            const geoJsonLayer = L.geoJSON(data, {
+            habitatLayer = L.geoJSON(data, {
                 onEachFeature: function(feature, layer) {
-                    let classification = feature.properties['habitat classification (broad)'] || UNKNOWN_HABITAT;
+                    const classification = feature.properties['broad'] || "Unknown";
                     if (habitatLayerGroups[classification]) {
-                        const props = feature.properties;
-                        const area = props['newarea'] ? `${Math.round(props['newarea']).toLocaleString()} m²` : 'N/A';
-                        layer.bindPopup(`<b>Habitat:</b> ${classification}<br><b>Area:</b> ${area}`);
+                        layer.bindPopup(`<b>Habitat:</b> ${classification}<br><b>Year:</b> ${feature.properties['year'] || 'N/A'}`);
                         habitatLayerGroups[classification].addLayer(layer);
                     }
                     layer.on({
                         mouseover: (e) => e.target.setStyle({ weight: 3, color: '#FFFF00' }),
-                        mouseout: (e) => geoJsonLayer.resetStyle(e.target)
+                        mouseout: (e) => habitatLayer.resetStyle(e.target)
                     });
                 },
                 style: styleHabitat
             });
 
-            classifications.forEach(name => {
-                if (habitatVisibilityState[name]) {
-                    map.addLayer(habitatLayerGroups[name]);
-                }
-            });
+            habitatLayer.addTo(map);
             
-            habitatBounds = geoJsonLayer.getBounds();
-
-            let legendContent = `
-                <div class="legend-accordion-header" data-target="#habitat-content">
-                    <span>Habitats</span><span class="arrow">▼</span>
-                </div>
-                <div class="legend-accordion-content" id="habitat-content">
-                    <div class="legend-controls">
-                        <a data-type="habitat" data-action="all">Select All</a>
-                        <a data-type="habitat" data-action="none">Deselect All</a>
-                    </div>
-                    <div class="legend-scroll-content">`;
-            classifications.forEach(name => {
-                const isChecked = habitatVisibilityState[name] ? 'checked' : '';
-                legendContent += `<div class="legend-item">
-                    <label>
-                        <input type="checkbox" data-type="habitat" data-name="${name}" ${isChecked}>
-                        <i style="background:${habitatColors[name]}; opacity: 0.5;"></i> ${name}
-                    </label>
-                </div>`;
-            });
-            legendContent += `</div></div>`;
-            $('#habitat-legend').html(legendContent).show();
+            habitatBounds = habitatLayer.getBounds();
+            updateHabitatLegend(classifications);
+            checkAndFitBounds();
             
         }).fail(() => {
-            console.error("Could not load habitat polygons.");
+            console.error("Could not load habitat polygons for year: " + selectedYear);
             $('#habitat-legend').hide();
         });
     }
 
     function styleHabitat(feature) {
-        const classification = feature.properties['habitat classification (broad)'] || "Unknown Habitat";
-        const color = habitatColors[classification] || '#808080';
-        return {
-            fillColor: color,
-            fillOpacity: 0.5,
+        const classification = feature.properties['broad'] || "Unknown";
+        let style = {
             weight: 1.5,
-            color: color,
             opacity: 0.8,
+            fillOpacity: 0.7,
             pane: 'habitatPane'
         };
+
+        switch (classification) {
+            case 'arable margins':
+                style.color = '#FFA500'; // Orange
+                style.fillColor = '#FFA500';
+                break;
+            case 'buildings':
+                style.color = '#696969'; // Darker Grey (DimGray)
+                style.fillColor = '#696969';
+                break;
+            case 'freshwater':
+                style.color = '#ADD8E6'; // Light Blue
+                style.fillColor = '#ADD8E6';
+                break;
+            case 'garden':
+                style.color = '#9ACD32'; // YellowGreen
+                style.fillColor = '#9ACD32';
+                break;
+            case 'hedge':
+                style.color = '#6B8E23'; // **DIFFERENTIATED COLOR: OliveDrab**
+                style.fillColor = '#6B8E23';
+                break;
+            case 'intertidal mudflat':
+                style.color = '#D2B48C'; // Tan
+                style.fillColor = '#D2B48C';
+                break;
+            case 'modified grassland':
+                style.color = '#00FF00'; // Neon Green (Lime)
+                style.fillColor = '#00FF00';
+                break;
+            case 'natural grassland':
+                style.color = '#ADFF2F'; // GreenYellow
+                style.fillColor = '#ADFF2F';
+                break;
+            case 'other developed land':
+                style.color = '#778899'; // LightSlateGray
+                style.fillColor = '#778899';
+                break;
+            case '(unsealed unvegetated surface)':
+                style.color = '#800080'; // Purple
+                style.fillColor = '#800080';
+                break;
+            case 'woodland':
+                style.color = '#228B22'; // **DIFFERENTIATED COLOR: ForestGreen**
+                style.fillColor = '#228B22';
+                break;
+            case 'other biodiversity':
+                style.color = '#90EE90'; // **NEW CATEGORY: LightGreen**
+                style.fillColor = '#90EE90';
+                break;
+            default:
+                style.color = '#000000'; // Black for unknown
+                style.fillColor = '#000000';
+        }
+        return style;
     }
+
+    function updateHabitatLegend(classifications) {
+        let legendContent = `
+            <div class="legend-accordion-header active" data-target="#habitat-content">
+                <span>Habitats</span><span class="arrow">▼</span>
+            </div>
+            <div class="legend-accordion-content show" id="habitat-content">
+                <div class="legend-controls">
+                    <a data-type="habitat" data-action="all">Select All</a>
+                    <a data-type="habitat" data-action="none">Deselect All</a>
+                </div>
+                <div class="legend-scroll-content">`;
+        
+        classifications.forEach(name => {
+            const isChecked = habitatVisibilityState[name] ? 'checked' : '';
+            const style = styleHabitat({ properties: { broad: name } });
+            
+            // This is the simplified, robust logic that is guaranteed to work.
+            const swatchHtml = `<i class="legend-swatch" style="background: ${style.fillColor};"></i>`;
+
+            legendContent += `<div class="legend-item">
+                <label>
+                    <input type="checkbox" data-type="habitat" data-name="${name}" ${isChecked}>
+                    ${swatchHtml}
+                    <span>${name}</span>
+                </label>
+            </div>`;
+        });
+        legendContent += `</div></div>`;
+        $('#habitat-legend').html(legendContent).show();
+    }
+
 
     function handleAccordionToggle(event) {
         const header = $(event.currentTarget);
-        const content = header.next('.legend-accordion-content');
+        const content = header.next('.card-content-collapsible');
         const wasActive = header.hasClass('active');
 
         $('.legend-accordion-header').removeClass('active');
@@ -485,8 +546,8 @@ $(document).ready(function() {
             habitatVisibilityState[name] = isChecked;
             const layerGroup = habitatLayerGroups[name];
             if (layerGroup) {
-                if (isChecked) map.addLayer(layerGroup);
-                else map.removeLayer(layerGroup);
+                if (isChecked) habitatLayer.addLayer(layerGroup);
+                else habitatLayer.removeLayer(layerGroup);
             }
         }
     }
@@ -565,7 +626,8 @@ $(document).ready(function() {
                 legendContent += `<div class="legend-item">
                     <label>
                         <input type="checkbox" data-type="species" data-name="${taxa}" ${isChecked}>
-                        <i style="background:${taxaColors[taxa]}"></i> ${taxa}
+                        <i class="legend-swatch" style="background:${taxaColors[taxa]}; border-radius: 50%;"></i>
+                        <span>${taxa}</span>
                     </label>
                 </div>`;
             });
@@ -582,7 +644,7 @@ $(document).ready(function() {
         taxaVisibilityState = {};
         habitatVisibilityState = {};
         $('.legend-item input[type="checkbox"]').prop('checked', true);
-        Object.values(habitatLayerGroups).forEach(lg => { if (lg && !map.hasLayer(lg)) map.addLayer(lg); });
+        Object.values(habitatLayerGroups).forEach(lg => { if (lg && !habitatLayer.hasLayer(lg)) habitatLayer.addLayer(lg); });
         $('.filter-select, .filter-select-single').val(null).trigger('change');
     }
 
@@ -746,70 +808,69 @@ $(document).ready(function() {
         const container = $('#habitat-summary-container');
         container.append('<div class="loading-overlay"><span>Loading...</span></div>');
 
-        $.when(
-            $.get(`${API_BASE_URL}/api/summary/habitat`),
-            $.get(`${API_BASE_URL}/api/summary/management_biodiversity`)
-        ).done(function(habitatResponse, managementResponse) {
-            const habitatData = habitatResponse[0];
-            const managementData = managementResponse[0];
+        $.get(`${API_BASE_URL}/api/summary/habitat`).done(data => {
+            const table = $('#habitat-summary-table');
+            const thead = table.find('thead').empty();
+            const tbody = table.find('tbody').empty();
 
-            if (!habitatData || !habitatData.summary) {
-                showErrorMessage('#habitat-summary-table tbody', 'Could not load main habitat summary.');
+            if (!data || !data.years || data.years.length === 0) {
+                showErrorMessage('#habitat-summary-table', 'No habitat summary data available.');
                 return;
             }
 
-            let combinedSummary = habitatData.summary;
+            // --- Build Table Header ---
+            const headerRow1 = $('<tr>');
+            headerRow1.append('<th rowspan="2" style="vertical-align: middle;">Habitat</th>');
             
-            if (managementData) {
-                for (const [name, values] of Object.entries(managementData)) {
-                    combinedSummary.push({
-                        habitat: name, 
-                        areaha: values.area_ha || 0,
-                        no10sq: values.no_10m_sq || 0,
-                        percent: 0, 
-                        no10sq_percent: 0 
-                    });
+            const headerRow2 = $('<tr>');
+            const metricHeaders = ['Area (ha)', 'Area (%)', 'Biomscore', 'No. 10m Squares', 'Squares (%)'];
+
+            data.years.forEach(year => {
+                headerRow1.append(`<th colspan="5">${year}</th>`);
+                metricHeaders.forEach(metric => {
+                    headerRow2.append(`<th>${metric}</th>`);
+                });
+            });
+            thead.append(headerRow1, headerRow2);
+
+            // --- Build Table Body ---
+            data.habitats.forEach(habitat => {
+                const row = $('<tr>');
+                row.append(`<td><b>${habitat.name}</b></td>`);
+                data.years.forEach(year => {
+                    const metrics = habitat.metrics[year];
+                    if (metrics) {
+                        row.append(`<td style="text-align:right;">${metrics.areaha.toFixed(1)}</td>`);
+                        row.append(`<td style="text-align:right;">${metrics.percent_area.toFixed(1)}%</td>`);
+                        row.append(`<td style="text-align:right;">${Math.round(metrics.biomscore).toLocaleString()}</td>`);
+                        row.append(`<td style="text-align:right;">${metrics.no10msquares.toLocaleString()}</td>`);
+                        row.append(`<td style="text-align:right;">${metrics.percent_squares.toFixed(1)}%</td>`);
+                    } else {
+                        row.append('<td colspan="5">N/A</td>');
+                    }
+                });
+                tbody.append(row);
+            });
+
+            // --- Build Total Footer Row ---
+            const totalRow = $('<tr style="font-weight: bold; background-color: var(--light-gray);">');
+            totalRow.append('<td>Total</td>');
+            data.years.forEach(year => {
+                const totals = data.totals[year];
+                if (totals) {
+                    totalRow.append(`<td style="text-align:right;">${totals.areaha.toFixed(1)}</td>`);
+                    totalRow.append(`<td style="text-align:right;">${totals.percent_area.toFixed(1)}%</td>`);
+                    totalRow.append(`<td style="text-align:right;">${Math.round(totals.biomscore).toLocaleString()}</td>`);
+                    totalRow.append(`<td style="text-align:right;">${totals.no10msquares.toLocaleString()}</td>`);
+                    totalRow.append(`<td style="text-align:right;">${totals.percent_squares.toFixed(1)}%</td>`);
+                } else {
+                    totalRow.append('<td colspan="5">N/A</td>');
                 }
-            }
-
-            const total_area_ha = combinedSummary.reduce((sum, row) => sum + row.areaha, 0);
-            const total_no10sq = combinedSummary.reduce((sum, row) => sum + row.no10sq, 0);
-
-            combinedSummary.forEach(row => {
-                row.percent = total_area_ha > 0 ? (row.areaha / total_area_ha) * 100 : 0;
-                row.no10sq_percent = total_no10sq > 0 ? (row.no10sq / total_no10sq) * 100 : 0;
             });
-
-            combinedSummary.sort((a, b) => a.habitat.localeCompare(b.habitat));
-
-            const tableBody = $('#habitat-summary-table tbody').empty();
-            if (combinedSummary.length === 0) {
-                tableBody.append('<tr><td colspan="5" style="text-align:center; padding: 2em;">No habitat data available.</td></tr>');
-                return;
-            }
-
-            combinedSummary.forEach(row => {
-                const tableRow = `<tr>
-                    <td><b>${row.habitat}</b></td>
-                    <td>${row.areaha.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                    <td>${row.percent.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1})}%</td>
-                    <td>${row.no10sq.toLocaleString()}</td>
-                    <td>${row.no10sq_percent.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1})}%</td>
-                </tr>`;
-                tableBody.append(tableRow);
-            });
-
-            const totalRow = `<tr style="font-weight: bold; background-color: var(--light-gray);">
-                <td>Total</td>
-                <td>${total_area_ha.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                <td>100.0%</td>
-                <td>${total_no10sq.toLocaleString()}</td>
-                <td>100.0%</td>
-            </tr>`;
-            tableBody.append(totalRow);
+            tbody.append(totalRow);
 
         }).fail(() => {
-            showErrorMessage('#habitat-summary-table tbody', 'Could not load habitat summary data from the server.');
+            showErrorMessage('#habitat-summary-container', 'Could not load habitat summary data from the server.');
         }).always(() => {
             container.find('.loading-overlay').remove();
         });
