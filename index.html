@@ -17,6 +17,7 @@
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    
 
     <style>
         :root {
@@ -68,7 +69,6 @@
         .toggle-buttons button { background-color: var(--secondary-color); }
         .toggle-buttons button.active { background-color: var(--primary-color); }
 
-        /* Map and Legend specific styles */
         #map-container { height: 600px; border-radius: 8px; }
         .map-controls { padding: 0 1.5em 1.5em 1.5em; display: flex; gap: 1em; align-items: center; }
         .map-controls label { font-weight: bold; }
@@ -101,7 +101,7 @@
             transition: max-height 0.3s ease-in-out;
         }
         .legend-accordion-content.show {
-            max-height: 250px; /* Max height before scrolling */
+            max-height: 250px; 
             overflow-y: auto;
         }
         .legend-controls {
@@ -296,6 +296,7 @@ $(document).ready(function() {
             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
 
+
         map.createPane('habitatPane');
         map.getPane('habitatPane').style.zIndex = 390;
         map.createPane('markerPane');
@@ -422,55 +423,51 @@ $(document).ready(function() {
 
         switch (classification) {
             case 'arable margins':
-                style.color = '#FFA500'; // Orange
+                style.color = '#FFA500'; 
                 style.fillColor = '#FFA500';
                 break;
             case 'buildings':
-                style.color = '#696969'; // Darker Grey (DimGray)
+                style.color = '#696969'; 
                 style.fillColor = '#696969';
                 break;
             case 'freshwater':
-                style.color = '#ADD8E6'; // Light Blue
+                style.color = '#ADD8E6'; 
                 style.fillColor = '#ADD8E6';
                 break;
             case 'garden':
-                style.color = '#9ACD32'; // YellowGreen
+                style.color = '#9ACD32'; 
                 style.fillColor = '#9ACD32';
                 break;
             case 'hedge':
-                style.color = '#6B8E23'; // **DIFFERENTIATED COLOR: OliveDrab**
+                style.color = '#6B8E23'; 
                 style.fillColor = '#6B8E23';
                 break;
             case 'intertidal mudflat':
-                style.color = '#D2B48C'; // Tan
+                style.color = '#D2B48C'; 
                 style.fillColor = '#D2B48C';
                 break;
             case 'modified grassland':
-                style.color = '#00FF00'; // Neon Green (Lime)
+                style.color = '#00FF00'; 
                 style.fillColor = '#00FF00';
                 break;
             case 'natural grassland':
-                style.color = '#ADFF2F'; // GreenYellow
+                style.color = '#ADFF2F'; 
                 style.fillColor = '#ADFF2F';
                 break;
             case 'other developed land':
-                style.color = '#778899'; // LightSlateGray
+                style.color = '#778899'; 
                 style.fillColor = '#778899';
                 break;
             case '(unsealed unvegetated surface)':
-                style.color = '#800080'; // Purple
+                style.color = '#800080'; 
                 style.fillColor = '#800080';
                 break;
             case 'woodland':
-                style.color = '#228B22'; // **DIFFERENTIATED COLOR: ForestGreen**
+                style.color = '#228B22'; 
                 style.fillColor = '#228B22';
                 break;
-            case 'other biodiversity':
-                style.color = '#90EE90'; // **NEW CATEGORY: LightGreen**
-                style.fillColor = '#90EE90';
-                break;
             default:
-                style.color = '#000000'; // Black for unknown
+                style.color = '#000000'; 
                 style.fillColor = '#000000';
         }
         return style;
@@ -492,7 +489,6 @@ $(document).ready(function() {
             const isChecked = habitatVisibilityState[name] ? 'checked' : '';
             const style = styleHabitat({ properties: { broad: name } });
             
-            // This is the simplified, robust logic that is guaranteed to work.
             const swatchHtml = `<i class="legend-swatch" style="background: ${style.fillColor};"></i>`;
 
             legendContent += `<div class="legend-item">
