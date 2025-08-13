@@ -31,51 +31,45 @@ def read_root_head():
     return Response(status_code=200)
 
 DATA_PATH = Path(__file__).parent / "data"
-df = None
-ALL_UNIQUE_SPECIES = []
 
 def load_data() -> pd.DataFrame:
-    if not DATA_PATH.is_dir():
-        print(f"ERROR: Data directory not found: {DATA_PATH}", file=sys.stderr)
-        raise FileNotFoundError(str(DATA_PATH))
-
+    """
+    Loads and concatenates all parquet files from the data directory on-demand.
+    This version is robust to missing columns in individual files.
+    """
     parquet_files = list(DATA_PATH.glob("*.parquet"))
     if not parquet_files:
-        print(f"ERROR: No .parquet files found in directory: {DATA_PATH}", file=sys.stderr)
-        raise FileNotFoundError(f"No .parquet files in {DATA_PATH}")
+        raise HTTPException(status_code=500, detail="No parquet data files found on server.")
 
-    df_list = [pd.read_parquet(file) for file in parquet_files]
-    _df = pd.concat(df_list, ignore_index=True)
+    try:
+        df_list = [pd.read_parquet(file) for file in parquet_files]
+        _df = pd.concat(df_list, ignore_index=True)
 
-    for col in ["english_name", "species", "obs", "taxa"]:
-        if col in _df.columns:
-            _df[col] = _df[col].astype("category")
-
-    _df["Date"] = pd.to_datetime(_df["Date"])
-    _df["year"] = _df["Date"].dt.year
-    _df["month"] = _df["Date"].dt.month
-    if "Taxa" in _df.columns:
-        _df = _df.rename(columns={"Taxa": "taxa"})
-    
-    if 'latitude' in _df.columns:
-        _df['latitude'] = pd.to_numeric(_df['latitude'], errors='coerce')
-    if 'longitude' in _df.columns:
-        _df['longitude'] = pd.to_numeric(_df['longitude'], errors='coerce')
-    
-    if 'count' in _df.columns:
-        _df['count'] = pd.to_numeric(_df['count'], errors='coerce')
-
-    _df.reset_index(inplace=True)
-    _df = _df.rename(columns={'index': 'id'})
         
-    return _df
+        if "Taxa" in _df.columns:
+            _df = _df.rename(columns={"Taxa": "taxa"})
 
-try:
-    df = load_data()
-    df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
-    ALL_UNIQUE_SPECIES = sorted(df['species'].dropna().unique().tolist())
-except Exception as e:
-    raise RuntimeError(f"Failed to load dataset: {e}") from e
+        if "Date" in _df.columns:
+            _df["Date"] = pd.to_datetime(_df["Date"])
+            _df["year"] = _df["Date"].dt.year
+            _df["month"] = _df["Date"].dt.month
+        
+        for col in ["english_name", "species", "obs", "taxa"]:
+            if col in _df.columns:
+                _df[col] = _df[col].astype("category")
+        
+        if 'count' in _df.columns:
+            _df['count'] = pd.to_numeric(_df['count'], errors='coerce')
+
+        if 'id' not in _df.columns:
+            _df.reset_index(inplace=True)
+            _df = _df.rename(columns={'index': 'id'})
+
+        return _df
+    except Exception as e:
+        print(f"Error loading data: {e}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail="Could not load or process data files.")
+
 
 def apply_filters(
     query_df: pd.DataFrame,
@@ -145,15 +139,9 @@ def get_management_points(year: str):
         data = json.load(f)
     return JSONResponse(content=data)
 
-# --- START: New Endpoints for Camera Traps ---
 @app.get("/api/cameratrap_years")
 def get_cameratrap_years():
-    """
-    Dynamically finds all available camera trap years by scanning for
-    'cameratraps_*.geojson' files in the data directory.
-    """
     years = []
-    # Regex to find files like "cameratraps_2024-25.geojson"
     pattern = re.compile(r"cameratraps_(\d{4}-\d{2})\.geojson")
     for f in DATA_PATH.glob("cameratraps_*.geojson"):
         match = pattern.match(f.name)
@@ -163,9 +151,6 @@ def get_cameratrap_years():
 
 @app.get("/api/cameratrap_points")
 def get_cameratrap_points(year: str):
-    """
-    Serves the GeoJSON data for a specific camera trap year.
-    """
     cameratrap_file = DATA_PATH / f"cameratraps_{year}.geojson"
     if not cameratrap_file.is_file():
         raise HTTPException(
@@ -175,7 +160,6 @@ def get_cameratrap_points(year: str):
     with open(cameratrap_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
-# --- END: New Endpoints for Camera Traps ---
 
 @app.get("/api/habitat_polygons")
 def get_habitat_polygons(year: Optional[str] = "2024-25"):
@@ -204,10 +188,13 @@ def get_habitat_summary():
 
 @app.get("/api/all_unique_species")
 def get_all_unique_species(page: int = 1, page_size: int = 10):
-    total_species = len(ALL_UNIQUE_SPECIES)
+    df = load_data()
+    all_unique_species = sorted(df['species'].dropna().unique().tolist())
+    
+    total_species = len(all_unique_species)
     start_index = (page - 1) * page_size
     end_index = start_index + page_size
-    paginated_species = ALL_UNIQUE_SPECIES[start_index:end_index]
+    paginated_species = all_unique_species[start_index:end_index]
 
     return {
         "species_list": paginated_species,
@@ -225,7 +212,8 @@ def get_filter_options(
     year: Optional[str] = None,
     month: Optional[str] = None,
 ):
-    base_df = df
+    base_df = load_data()
+
     options = {}
     temp_df = apply_filters(base_df, species=species, obs=obs, taxa=taxa, year=year, month=month)
     options["english_name"] = _get_options(temp_df, "english_name")
@@ -253,6 +241,8 @@ def get_records(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
+    df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     total_records = len(query_df)
     paginated_data = query_df.iloc[(page - 1) * page_size : page * page_size].copy()
@@ -282,14 +272,15 @@ def get_record_page(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
+    df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     try:
-        indices = query_df.index.tolist()
-        record_original_index = df.loc[df['id'] == record_id].index[0]
-        position = indices.index(record_original_index)
+        sorted_ids = query_df['id'].tolist()
+        position = sorted_ids.index(record_id)
         page = floor(position / page_size) + 1
         return {"page": page}
-    except (IndexError, ValueError):
+    except (ValueError, IndexError):
         raise HTTPException(status_code=404, detail="Record not found in the current filter context.")
 
 @app.get("/api/map_data")
@@ -302,6 +293,7 @@ def get_map_data(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     map_df = query_df.dropna(subset=['latitude', 'longitude']).copy()
     map_df = map_df[['id', 'english_name', 'species', 'obs', 'Date', 'taxa', 'latitude', 'longitude']]
@@ -323,6 +315,7 @@ def get_diversity_summary(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     
     if query_df.empty:
@@ -353,6 +346,7 @@ def get_diversity_summary(
 
 @app.get("/api/summary/annual_trends")
 def get_annual_trends():
+    df = load_data()
     if 'year' not in df.columns or df['year'].isnull().all():
         return {"trends": []}
 
@@ -396,6 +390,7 @@ def get_species_distribution(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return []
@@ -422,6 +417,7 @@ def get_temporal_trends(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return {}
@@ -440,6 +436,7 @@ def get_observer_comparison(
 ):
     if not obs:
         return {}
+    df = load_data()
     query_df = apply_filters(df, english_name, species, taxa=taxa, year=year, month=month, bbox=bbox)
     query_df = query_df[query_df["obs"].isin(obs.split(","))]
     if query_df.empty:
@@ -457,6 +454,7 @@ def get_observer_stats(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
+    df = load_data()
     query_df = apply_filters(df, english_name, species, None, taxa, year, month, bbox)
     observer_df = query_df[query_df["obs"] == observer_name]
     if observer_df.empty:
