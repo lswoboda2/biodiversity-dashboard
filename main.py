@@ -62,6 +62,9 @@ def load_data() -> pd.DataFrame:
     if 'longitude' in _df.columns:
         _df['longitude'] = pd.to_numeric(_df['longitude'], errors='coerce')
     
+    if 'count' in _df.columns:
+        _df['count'] = pd.to_numeric(_df['count'], errors='coerce')
+
     _df.reset_index(inplace=True)
     _df = _df.rename(columns={'index': 'id'})
         
@@ -120,33 +123,79 @@ def root():
 def health():
     return {"ok": True}
 
+@app.get("/api/management_years")
+def get_management_years():
+    years = []
+    pattern = re.compile(r"management_(\d{4}-\d{2})\.geojson")
+    for f in DATA_PATH.glob("management_*.geojson"):
+        match = pattern.match(f.name)
+        if match:
+            years.append(match.group(1))
+    return sorted(years, reverse=True)
+
+@app.get("/api/management_points")
+def get_management_points(year: str):
+    management_file = DATA_PATH / f"management_{year}.geojson"
+    if not management_file.is_file():
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Management data for year {year} not found."
+        )
+    with open(management_file, 'r') as f:
+        data = json.load(f)
+    return JSONResponse(content=data)
+
+# --- START: New Endpoints for Camera Traps ---
+@app.get("/api/cameratrap_years")
+def get_cameratrap_years():
+    """
+    Dynamically finds all available camera trap years by scanning for
+    'cameratraps_*.geojson' files in the data directory.
+    """
+    years = []
+    # Regex to find files like "cameratraps_2024-25.geojson"
+    pattern = re.compile(r"cameratraps_(\d{4}-\d{2})\.geojson")
+    for f in DATA_PATH.glob("cameratraps_*.geojson"):
+        match = pattern.match(f.name)
+        if match:
+            years.append(match.group(1))
+    return sorted(years, reverse=True)
+
+@app.get("/api/cameratrap_points")
+def get_cameratrap_points(year: str):
+    """
+    Serves the GeoJSON data for a specific camera trap year.
+    """
+    cameratrap_file = DATA_PATH / f"cameratraps_{year}.geojson"
+    if not cameratrap_file.is_file():
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Camera trap data for year {year} not found."
+        )
+    with open(cameratrap_file, 'r') as f:
+        data = json.load(f)
+    return JSONResponse(content=data)
+# --- END: New Endpoints for Camera Traps ---
+
 @app.get("/api/habitat_polygons")
 def get_habitat_polygons(year: Optional[str] = "2024-25"):
-    """
-    Serves a pre-generated, year-specific GeoJSON file for the map.
-    Defaults to the latest year if none is specified.
-    """
     habitat_file = DATA_PATH / f"habitats_{year}.geojson"
     if not habitat_file.is_file():
         raise HTTPException(
             status_code=404, 
-            detail=f"Habitat data for year {year} not found. Please run the conversion script."
+            detail=f"Habitat data for year {year} not found."
         )
-    
     with open(habitat_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
 
 @app.get("/api/summary/habitat")
 def get_habitat_summary():
-    """
-    Serves the pre-processed habitat summary data for the main table.
-    """
     summary_file = DATA_PATH / "habitat_summary.json"
     if not summary_file.is_file():
         raise HTTPException(
             status_code=404, 
-            detail="Habitat summary file not found. Please run the processing script."
+            detail="Habitat summary file not found."
         )
     with open(summary_file, 'r') as f:
         data = json.load(f)
@@ -177,26 +226,19 @@ def get_filter_options(
     month: Optional[str] = None,
 ):
     base_df = df
-
     options = {}
     temp_df = apply_filters(base_df, species=species, obs=obs, taxa=taxa, year=year, month=month)
     options["english_name"] = _get_options(temp_df, "english_name")
-
     temp_df = apply_filters(base_df, english_name=english_name, obs=obs, taxa=taxa, year=year, month=month)
     options["species"] = _get_options(temp_df, "species")
-
     temp_df = apply_filters(base_df, english_name=english_name, species=species, taxa=taxa, year=year, month=month)
     options["obs"] = _get_options(temp_df, "obs")
-
     temp_df = apply_filters(base_df, english_name=english_name, species=species, obs=obs, year=year, month=month)
     options["taxa"] = _get_options(temp_df, "taxa")
-
     temp_df = apply_filters(base_df, english_name=english_name, species=species, obs=obs, taxa=taxa, month=month)
     options["year"] = _get_options(temp_df, "year")
-
     temp_df = apply_filters(base_df, english_name=english_name, species=species, obs=obs, taxa=taxa, year=year)
     options["month"] = _get_options(temp_df, "month")
-
     return options
 
 @app.get("/api/records")
@@ -241,17 +283,14 @@ def get_record_page(
     bbox: Optional[str] = None,
 ):
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    
     try:
         indices = query_df.index.tolist()
         record_original_index = df.loc[df['id'] == record_id].index[0]
         position = indices.index(record_original_index)
-        
         page = floor(position / page_size) + 1
         return {"page": page}
     except (IndexError, ValueError):
         raise HTTPException(status_code=404, detail="Record not found in the current filter context.")
-
 
 @app.get("/api/map_data")
 def get_map_data(
@@ -264,19 +303,15 @@ def get_map_data(
     bbox: Optional[str] = None,
 ):
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    
     map_df = query_df.dropna(subset=['latitude', 'longitude']).copy()
     map_df = map_df[['id', 'english_name', 'species', 'obs', 'Date', 'taxa', 'latitude', 'longitude']]
-    
     map_df = (
         map_df.replace([np.inf, -np.inf], None)
         .astype(object)
         .where(pd.notnull(map_df), None)
     )
-    
     records = map_df.to_dict(orient="records")
     return JSONResponse(content=jsonable_encoder(records))
-
 
 @app.get("/api/summary/diversity")
 def get_diversity_summary(
@@ -289,15 +324,25 @@ def get_diversity_summary(
     bbox: Optional[str] = None,
 ):
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    species_counts = query_df.groupby("species", observed=True)["count"].sum() if not query_df.empty else pd.Series(dtype=float)
+    
+    if query_df.empty:
+        return {"shannon": 0, "simpson": 0, "species_richness": 0, "total_records": 0}
+
+    use_count_column = "count" in query_df.columns and query_df["count"].notna().sum() > (len(query_df) / 2)
+
+    if use_count_column:
+        species_counts = query_df.groupby("species", observed=True)["count"].sum()
+    else:
+        species_counts = query_df.groupby("species", observed=True).size()
+
     species_richness = len(species_counts)
+    shannon_index = 0
+    gini_simpson_index = 0
 
-    if query_df.empty or "count" not in query_df.columns or query_df["count"].sum() == 0 or species_richness <= 1:
-        return {"shannon": 0, "simpson": 0, "species_richness": species_richness, "total_records": len(query_df)}
-
-    proportions = species_counts[species_counts > 0] / species_counts.sum()
-    shannon_index = entropy(proportions, base=np.e)
-    gini_simpson_index = 1 - (proportions**2).sum()
+    if not species_counts.empty and species_counts.sum() > 0 and species_richness > 1:
+        proportions = species_counts[species_counts > 0] / species_counts.sum()
+        shannon_index = entropy(proportions, base=np.e)
+        gini_simpson_index = 1 - (proportions**2).sum()
 
     return {
         "shannon": round(float(shannon_index), 3),
@@ -312,15 +357,21 @@ def get_annual_trends():
         return {"trends": []}
 
     yearly_data = []
-    for year, group in sorted(df.groupby('year'), key=lambda x: x[0]):
-        species_counts = group.groupby("species", observed=True)["count"].sum()
-        species_richness = len(species_counts)
+    for year, group in sorted(df.groupby('year', observed=True), key=lambda x: x[0]):
         total_records = len(group)
+        
+        use_count_column = "count" in group.columns and group["count"].notna().sum() > (len(group) / 2)
 
+        if use_count_column:
+            species_counts = group.groupby("species", observed=True)["count"].sum()
+        else:
+            species_counts = group.groupby("species", observed=True).size()
+
+        species_richness = len(species_counts)
         shannon_index = 0
         gini_simpson_index = 0
 
-        if not group.empty and "count" in group.columns and group["count"].sum() > 0 and species_richness > 1:
+        if not species_counts.empty and species_counts.sum() > 0 and species_richness > 1:
             proportions = species_counts[species_counts > 0] / species_counts.sum()
             shannon_index = entropy(proportions, base=np.e)
             gini_simpson_index = 1 - (proportions**2).sum()
@@ -348,13 +399,10 @@ def get_species_distribution(
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return []
-
     species_counts = query_df['english_name'].value_counts()
     top_20_names = species_counts.nlargest(20).index.tolist()
-
     top_20_df = query_df[query_df['english_name'].isin(top_20_names)]
     taxa_map = top_20_df.groupby('english_name', observed=True)['taxa'].first()
-
     result = []
     for name in top_20_names:
         result.append({
@@ -362,7 +410,6 @@ def get_species_distribution(
             "count": int(species_counts[name]),
             "taxa": taxa_map.get(name, "Unknown")
         })
-
     return result
 
 @app.get("/api/summary/temporal_trends")
@@ -412,23 +459,18 @@ def get_observer_stats(
 ):
     query_df = apply_filters(df, english_name, species, None, taxa, year, month, bbox)
     observer_df = query_df[query_df["obs"] == observer_name]
-
     if observer_df.empty:
         return {}
-
     specialization = observer_df.groupby('taxa', observed=True).size().sort_values(ascending=False)
     other_breakdown = {}
-
     if len(specialization) > 20:
         top_20 = specialization.head(20)
         other_taxa = specialization.tail(-20)
         other_sum = other_taxa.sum()
-
         if other_sum > 0:
             other_breakdown = other_taxa.to_dict()
             other_series = pd.Series([other_sum], index=['Other'])
             specialization = pd.concat([top_20, other_series])
-
     return {
         "specialization": specialization.to_dict(),
         "other_breakdown": other_breakdown

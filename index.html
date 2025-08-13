@@ -18,7 +18,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     
-
     <style>
         :root {
             --primary-color: #007bff;
@@ -55,7 +54,8 @@
         th { background-color: var(--light-gray); text-align: center; }
         td.wrap-text { white-space: normal; word-break: break-word; max-width: 250px; }
         tr.highlighted { background-color: var(--highlight-color) !important; }
-        button { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; }
+        button { background-color: var(--primary-color); color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
         .pagination { display: flex; justify-content: center; align-items: center; gap: 1em; padding: 1.5em; }
         .loading-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.7); display: flex; justify-content: center; align-items: center; z-index: 10; font-style: italic; color: #666; }
         .error-message { text-align: center; color: var(--error-color); padding: 2em; }
@@ -65,12 +65,63 @@
         .card-content-collapsible { max-height: 1000px; overflow: hidden; transition: max-height 0.5s ease-in-out, padding 0.5s ease-in-out; padding: 0; }
         .card-content-collapsible.collapsed { max-height: 0; padding-top: 0; padding-bottom: 0; }
         
-        .toggle-buttons { text-align: center; margin-bottom: 1.5em; }
-        .toggle-buttons button { background-color: var(--secondary-color); }
-        .toggle-buttons button.active { background-color: var(--primary-color); }
+        .chart-controls {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75em 1em;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 1.5em;
+            gap: 1em;
+        }
+        .chart-controls .control-group {
+            display: flex;
+            align-items: center;
+            gap: 0.75em;
+        }
+        .chart-controls label {
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 0;
+        }
+        .chart-controls select {
+            padding: 8px 12px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            background-color: #fff;
+            font-size: 0.9em;
+        }
+        .btn-group button {
+            background-color: #fff;
+            color: var(--primary-color);
+            border: 1px solid var(--primary-color);
+            padding: 8px 15px;
+            border-radius: 0;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .btn-group button:first-child {
+            border-top-left-radius: 5px;
+            border-bottom-left-radius: 5px;
+        }
+        .btn-group button:last-child {
+            border-top-right-radius: 5px;
+            border-bottom-right-radius: 5px;
+            border-left-width: 0;
+        }
+        .btn-group button.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        .btn-group button:not(.active):hover {
+            background-color: #e9ecef;
+        }
 
+        /* Map and Legend specific styles */
         #map-container { height: 600px; border-radius: 8px; }
-        .map-controls { padding: 0 1.5em 1.5em 1.5em; display: flex; gap: 1em; align-items: center; }
+        .map-controls { padding: 0 1.5em 1.5em 1.5em; display: flex; flex-wrap: wrap; gap: 1em; align-items: center; }
         .map-controls label { font-weight: bold; }
         .map-controls select { padding: 8px; border-radius: 5px; border: 1px solid var(--border-color); }
         .legend-container {
@@ -101,7 +152,7 @@
             transition: max-height 0.3s ease-in-out;
         }
         .legend-accordion-content.show {
-            max-height: 250px; 
+            max-height: 250px; /* Max height before scrolling */
             overflow-y: auto;
         }
         .legend-controls {
@@ -177,6 +228,10 @@
                 <option value="2024-25" selected>2024-25</option>
                 <option value="2023-24">2023-24</option>
             </select>
+            <label for="management-year-filter">Management Year:</label>
+            <select id="management-year-filter"></select>
+            <label for="cameratrap-year-filter">Camera Trap Year:</label>
+            <select id="cameratrap-year-filter"></select>
         </div>
         <div id="map-container"></div>
     </div>
@@ -191,11 +246,57 @@
         </div>
     </div>
 
+    <h2>Annual Habitat Trends</h2>
+    <div class="card" id="annual-habitat-trends-container">
+        <div class="chart-controls">
+            <div class="control-group">
+                <label for="habitat-trend-habitat-select">Habitat:</label>
+                <select id="habitat-trend-habitat-select"></select>
+            </div>
+            <div class="control-group">
+                <label for="habitat-trend-metric-select">Metric:</label>
+                <select id="habitat-trend-metric-select">
+                    <option value="areaha" selected>Area (ha)</option>
+                    <option value="percent_area">Area (%)</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <div class="btn-group">
+                    <button id="habitat-trend-absolute-btn" class="active">Absolute</button>
+                    <button id="habitat-trend-standardized-btn">Standardized Growth</button>
+                </div>
+            </div>
+        </div>
+        <div id="annual-habitat-trends-chart-wrapper">
+            <div id="annual-habitat-trends-chart" class="chart-card" style="height: 400px;"></div>
+        </div>
+        <div class="table-wrapper" style="margin-top: 2em;">
+            <table id="annual-habitat-trends-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div class="loading-overlay" style="display: none;"><span>Loading...</span></div>
+    </div>
+
     <h2>Annual Trends</h2>
     <div class="card" id="annual-trends-container">
-        <div class="toggle-buttons">
-            <button id="annual-absolute-btn" class="active">Absolute</button>
-            <button id="annual-standardized-btn">Standardized Growth</button>
+        <div class="chart-controls">
+            <div class="control-group">
+                <label for="annual-metric-select">Metric:</label>
+                <select id="annual-metric-select">
+                    <option value="unique_species" selected>Unique Species</option>
+                    <option value="total_records">Total Records</option>
+                    <option value="shannon">Shannon Index (H')</option>
+                    <option value="simpson">Gini-Simpson Index (1-D)</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <div class="btn-group">
+                    <button id="annual-absolute-btn" class="active">Absolute</button>
+                    <button id="annual-standardized-btn">Standardized Growth</button>
+                </div>
+            </div>
         </div>
         <div id="annual-chart-wrapper">
             <div id="annual-trends-chart" class="chart-card" style="height: 400px;"></div>
@@ -245,12 +346,17 @@ $(document).ready(function() {
     let isUpdatingFilters = false;
     let isInitialLoad = true;
     let annualData = [];
+    let habitatSummaryData = null;
     let map, drawnItems, highlightedMarker = null;
     let geographicFilter = null;
     
     let markerLayers = {}, taxaLayerGroups = {}, taxaColors = {}, taxaVisibilityState = {};
     let habitatLayer = null; 
     let habitatLayerGroups = {}, habitatVisibilityState = {};
+    let managementClusterGroup = null;
+    let managementLayerGroups = {}, managementVisibilityState = {};
+    let cameraTrapClusterGroup = null;
+    let cameraTrapLayerGroups = {}, cameraTrapVisibilityState = {};
     let habitatBounds = null, speciesBounds = null;
 
     function initializeDashboard() {
@@ -269,8 +375,16 @@ $(document).ready(function() {
 
         initializeMap();
         
-        $('#annual-trends-container').on('click', '#annual-absolute-btn', () => drawAnnualChart('absolute'));
-        $('#annual-trends-container').on('click', '#annual-standardized-btn', () => drawAnnualChart('standardized'));
+        const annualTrendsContainer = $('#annual-trends-container');
+        annualTrendsContainer.on('click', '#annual-absolute-btn', drawAnnualChart);
+        annualTrendsContainer.on('click', '#annual-standardized-btn', drawAnnualChart);
+        annualTrendsContainer.on('change', '#annual-metric-select', drawAnnualChart);
+
+        const habitatTrendsContainer = $('#annual-habitat-trends-container');
+        habitatTrendsContainer.on('change', '#habitat-trend-habitat-select', drawHabitatTrendChart);
+        habitatTrendsContainer.on('change', '#habitat-trend-metric-select', drawHabitatTrendChart);
+        habitatTrendsContainer.on('click', '#habitat-trend-absolute-btn', drawHabitatTrendChart);
+        habitatTrendsContainer.on('click', '#habitat-trend-standardized-btn', drawHabitatTrendChart);
 
         $('#records-table').on('mouseenter', 'tbody tr', handleTableRowHover);
         $('#records-table').on('mouseleave', 'tbody tr', handleTableRowLeave);
@@ -278,12 +392,16 @@ $(document).ready(function() {
         $(document).on('click', '.legend-controls a', handleLegendControls);
         $(document).on('click', '.legend-accordion-header', handleAccordionToggle);
         $('#habitat-year-filter').on('change', () => loadHabitatLayer());
+        $('#management-year-filter').on('change', () => loadManagementLayer());
+        $('#cameratrap-year-filter').on('change', () => loadCameraTrapLayer());
 
         const initialUpdatePromise = updateFilterOptions().then(updateAllDashboardComponents);
         
         updateHabitatSummary(); 
         updateAnnualTrends();
         loadUniqueSpeciesTable(1);
+        initializeManagementFilter();
+        initializeCameraTrapFilter();
 
         loadHabitatLayer().then(() => {
             $.when(initialUpdatePromise).done(checkAndFitBounds);
@@ -296,11 +414,14 @@ $(document).ready(function() {
             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
 
-
         map.createPane('habitatPane');
         map.getPane('habitatPane').style.zIndex = 390;
         map.createPane('markerPane');
         map.getPane('markerPane').style.zIndex = 400;
+        map.createPane('managementPane');
+        map.getPane('managementPane').style.zIndex = 410;
+        map.createPane('cameraTrapPane');
+        map.getPane('cameraTrapPane').style.zIndex = 420;
         
         drawnItems = new L.FeatureGroup();
         map.addLayer(drawnItems);
@@ -336,6 +457,8 @@ $(document).ready(function() {
             div.innerHTML = `
                 <div id="species-legend" class="map-legend"></div>
                 <div id="habitat-legend" class="map-legend"></div>
+                <div id="management-legend" class="map-legend"></div>
+                <div id="cameratrap-legend" class="map-legend"></div>
             `;
             return div;
         };
@@ -361,6 +484,248 @@ $(document).ready(function() {
                 map.fitBounds(habitatBounds.pad(0.1));
             }
         }
+    }
+
+    function initializeManagementFilter() {
+        $.get(`${API_BASE_URL}/api/management_years`).done(years => {
+            const filter = $('#management-year-filter');
+            filter.empty();
+            if (years && years.length > 0) {
+                years.forEach(year => {
+                    filter.append(new Option(year, year));
+                });
+                filter.trigger('change');
+            } else {
+                filter.append(new Option('No Data', ''));
+            }
+        });
+    }
+
+    function initializeCameraTrapFilter() {
+        $.get(`${API_BASE_URL}/api/cameratrap_years`).done(years => {
+            const filter = $('#cameratrap-year-filter');
+            filter.empty();
+            if (years && years.length > 0) {
+                years.forEach(year => {
+                    filter.append(new Option(year, year));
+                });
+                filter.trigger('change');
+            } else {
+                filter.append(new Option('No Data', ''));
+            }
+        });
+    }
+
+    function getManagementStyle(type) {
+        let color;
+        switch (type) {
+            case 'box': color = '#8B4513'; break;
+            case 'feeder': color = '#DC143C'; break;
+            case 'hedge': color = '#228B22'; break;
+            case 'meadow': color = '#FFD700'; break;
+            case 'woodland': color = '#556B2F'; break;
+            default: color = '#808080';
+        }
+        return color;
+    }
+
+    function createDiamondIcon(color) {
+        const svg = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+            <path d="M12 0 L24 12 L12 24 L0 12 Z" fill="${color}" stroke="black" stroke-width="1.5"/>
+        </svg>`;
+        return L.icon({
+            iconUrl: 'data:image/svg+xml;base64,' + btoa(svg),
+            iconSize: [16, 16],
+            iconAnchor: [8, 8],
+            popupAnchor: [0, -8]
+        });
+    }
+
+    function getCameraTrapStyle(month) {
+        const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf', '#aec7e8', '#ffbb78'];
+        return colors[parseInt(month - 1) % colors.length];
+    }
+
+    function createTriangleIcon(color) {
+        const svg = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+            <path d="M12 0 L24 24 L0 24 Z" fill="${color}" stroke="black" stroke-width="1.5"/>
+        </svg>`;
+        return L.icon({
+            iconUrl: 'data:image/svg+xml;base64,' + btoa(svg),
+            iconSize: [16, 16],
+            iconAnchor: [8, 8],
+            popupAnchor: [0, -8]
+        });
+    }
+
+    function loadManagementLayer() {
+        const selectedYear = $('#management-year-filter').val();
+        if (!selectedYear) return;
+
+        if (managementClusterGroup) {
+            map.removeLayer(managementClusterGroup);
+        }
+        managementClusterGroup = L.markerClusterGroup({ pane: 'managementPane' });
+
+        return $.get(`${API_BASE_URL}/api/management_points`, { year: selectedYear }).done(data => {
+            if (!data || !data.features) {
+                $('#management-legend').hide();
+                return;
+            }
+
+            const types = [...new Set(data.features.map(f => f.properties['type2'] || "Unknown"))].sort();
+            managementLayerGroups = {};
+            types.forEach(name => {
+                managementLayerGroups[name] = L.layerGroup();
+                if (managementVisibilityState[name] === undefined) {
+                    managementVisibilityState[name] = true;
+                }
+            });
+
+            L.geoJSON(data, {
+                pointToLayer: function(feature, latlng) {
+                    const type = feature.properties['type2'] || "Unknown";
+                    const color = getManagementStyle(type);
+                    return L.marker(latlng, { 
+                        icon: createDiamondIcon(color)
+                    });
+                },
+                onEachFeature: function(feature, layer) {
+                    const type = feature.properties['type2'] || "Unknown";
+                    const management = feature.properties['management'] || "N/A";
+                    layer.bindPopup(`<b>Type:</b> ${type}<br><b>Management:</b> ${management}`);
+                    if (managementLayerGroups[type]) {
+                        managementLayerGroups[type].addLayer(layer);
+                    }
+                }
+            });
+
+            types.forEach(type => {
+                if (managementVisibilityState[type]) {
+                    managementClusterGroup.addLayer(managementLayerGroups[type]);
+                }
+            });
+            
+            map.addLayer(managementClusterGroup);
+            updateManagementLegend(types);
+        }).fail(() => {
+            console.error("Could not load management points for year: " + selectedYear);
+            $('#management-legend').hide();
+        });
+    }
+
+    function updateManagementLegend(types) {
+        let legendContent = `
+            <div class="legend-accordion-header" data-target="#management-content">
+                <span>Management</span><span class="arrow">▼</span>
+            </div>
+            <div class="legend-accordion-content" id="management-content">
+                <div class="legend-controls">
+                    <a data-type="management" data-action="all">Select All</a>
+                    <a data-type="management" data-action="none">Deselect All</a>
+                </div>
+                <div class="legend-scroll-content">`;
+        
+        types.forEach(name => {
+            const isChecked = managementVisibilityState[name] ? 'checked' : '';
+            const color = getManagementStyle(name);
+            const swatchHtml = `<i class="legend-swatch" style="background-image: url('data:image/svg+xml;base64,${btoa(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 0 L24 12 L12 24 L0 12 Z" fill="${color}" stroke="black" stroke-width="1"/></svg>`)}'); background-size: contain;"></i>`;
+
+            legendContent += `<div class="legend-item">
+                <label>
+                    <input type="checkbox" data-type="management" data-name="${name}" ${isChecked}>
+                    ${swatchHtml}
+                    <span>${name}</span>
+                </label>
+            </div>`;
+        });
+        legendContent += `</div></div>`;
+        $('#management-legend').html(legendContent).show();
+    }
+
+    function loadCameraTrapLayer() {
+        const selectedYear = $('#cameratrap-year-filter').val();
+        if (!selectedYear) return;
+
+        if (cameraTrapClusterGroup) {
+            map.removeLayer(cameraTrapClusterGroup);
+        }
+        cameraTrapClusterGroup = L.markerClusterGroup({ pane: 'cameraTrapPane' });
+
+        return $.get(`${API_BASE_URL}/api/cameratrap_points`, { year: selectedYear }).done(data => {
+            if (!data || !data.features) {
+                $('#cameratrap-legend').hide();
+                return;
+            }
+
+            const months = [...new Set(data.features.map(f => f.properties['monthout'] || "Unknown"))].sort((a, b) => a - b);
+            cameraTrapLayerGroups = {};
+            months.forEach(name => {
+                cameraTrapLayerGroups[name] = L.layerGroup();
+                if (cameraTrapVisibilityState[name] === undefined) {
+                    cameraTrapVisibilityState[name] = true;
+                }
+            });
+
+            L.geoJSON(data, {
+                pointToLayer: function(feature, latlng) {
+                    const month = feature.properties['monthout'] || "Unknown";
+                    const color = getCameraTrapStyle(month);
+                    return L.marker(latlng, { 
+                        icon: createTriangleIcon(color)
+                    });
+                },
+                onEachFeature: function(feature, layer) {
+                    const month = feature.properties['monthout'] || "Unknown";
+                    const trapNumber = feature.properties['ctrapnumber'] || "N/A";
+                    layer.bindPopup(`<b>Trap Number:</b> ${trapNumber}<br><b>Month Out:</b> ${monthNames[month] || month}`);
+                    if (cameraTrapLayerGroups[month]) {
+                        cameraTrapLayerGroups[month].addLayer(layer);
+                    }
+                }
+            });
+
+            months.forEach(month => {
+                if (cameraTrapVisibilityState[month]) {
+                    cameraTrapClusterGroup.addLayer(cameraTrapLayerGroups[month]);
+                }
+            });
+            
+            map.addLayer(cameraTrapClusterGroup);
+            updateCameraTrapLegend(months);
+        }).fail(() => {
+            console.error("Could not load camera trap points for year: " + selectedYear);
+            $('#cameratrap-legend').hide();
+        });
+    }
+
+    function updateCameraTrapLegend(months) {
+        let legendContent = `
+            <div class="legend-accordion-header" data-target="#cameratrap-content">
+                <span>Camera Traps</span><span class="arrow">▼</span>
+            </div>
+            <div class="legend-accordion-content" id="cameratrap-content">
+                <div class="legend-controls">
+                    <a data-type="cameratrap" data-action="all">Select All</a>
+                    <a data-type="cameratrap" data-action="none">Deselect All</a>
+                </div>
+                <div class="legend-scroll-content">`;
+        
+        months.forEach(month => {
+            const isChecked = cameraTrapVisibilityState[month] ? 'checked' : '';
+            const color = getCameraTrapStyle(month);
+            const swatchHtml = `<i class="legend-swatch" style="background-image: url('data:image/svg+xml;base64,${btoa(`<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 0 L24 24 L0 24 Z" fill="${color}" stroke="black" stroke-width="1"/></svg>`)}'); background-size: contain;"></i>`;
+
+            legendContent += `<div class="legend-item">
+                <label>
+                    <input type="checkbox" data-type="cameratrap" data-name="${month}" ${isChecked}>
+                    ${swatchHtml}
+                    <span>Month: ${monthNames[month] || month}</span>
+                </label>
+            </div>`;
+        });
+        legendContent += `</div></div>`;
+        $('#cameratrap-legend').html(legendContent).show();
     }
 
     function loadHabitatLayer() {
@@ -422,63 +787,29 @@ $(document).ready(function() {
         };
 
         switch (classification) {
-            case 'arable margins':
-                style.color = '#FFA500'; 
-                style.fillColor = '#FFA500';
-                break;
-            case 'buildings':
-                style.color = '#696969'; 
-                style.fillColor = '#696969';
-                break;
-            case 'freshwater':
-                style.color = '#ADD8E6'; 
-                style.fillColor = '#ADD8E6';
-                break;
-            case 'garden':
-                style.color = '#9ACD32'; 
-                style.fillColor = '#9ACD32';
-                break;
-            case 'hedge':
-                style.color = '#6B8E23'; 
-                style.fillColor = '#6B8E23';
-                break;
-            case 'intertidal mudflat':
-                style.color = '#D2B48C'; 
-                style.fillColor = '#D2B48C';
-                break;
-            case 'modified grassland':
-                style.color = '#00FF00'; 
-                style.fillColor = '#00FF00';
-                break;
-            case 'natural grassland':
-                style.color = '#ADFF2F'; 
-                style.fillColor = '#ADFF2F';
-                break;
-            case 'other developed land':
-                style.color = '#778899'; 
-                style.fillColor = '#778899';
-                break;
-            case '(unsealed unvegetated surface)':
-                style.color = '#800080'; 
-                style.fillColor = '#800080';
-                break;
-            case 'woodland':
-                style.color = '#228B22'; 
-                style.fillColor = '#228B22';
-                break;
-            default:
-                style.color = '#000000'; 
-                style.fillColor = '#000000';
+            case 'arable margins': style.fillColor = '#FFA500'; break;
+            case 'buildings': style.fillColor = '#696969'; break;
+            case 'freshwater': style.fillColor = '#ADD8E6'; break;
+            case 'garden': style.fillColor = '#9ACD32'; break;
+            case 'hedge': style.fillColor = '#6B8E23'; break;
+            case 'intertidal mudflat': style.fillColor = '#D2B48C'; break;
+            case 'modified grassland': style.fillColor = '#00FF00'; break;
+            case 'natural grassland': style.fillColor = '#ADFF2F'; break;
+            case 'other developed land': style.fillColor = '#778899'; break;
+            case '(unsealed unvegetated surface)': style.fillColor = '#800080'; break;
+            case 'woodland': style.fillColor = '#228B22'; break;
+            default: style.fillColor = '#000000';
         }
+        style.color = style.fillColor;
         return style;
     }
 
     function updateHabitatLegend(classifications) {
         let legendContent = `
-            <div class="legend-accordion-header active" data-target="#habitat-content">
+            <div class="legend-accordion-header" data-target="#habitat-content">
                 <span>Habitats</span><span class="arrow">▼</span>
             </div>
-            <div class="legend-accordion-content show" id="habitat-content">
+            <div class="legend-accordion-content" id="habitat-content">
                 <div class="legend-controls">
                     <a data-type="habitat" data-action="all">Select All</a>
                     <a data-type="habitat" data-action="none">Deselect All</a>
@@ -488,7 +819,6 @@ $(document).ready(function() {
         classifications.forEach(name => {
             const isChecked = habitatVisibilityState[name] ? 'checked' : '';
             const style = styleHabitat({ properties: { broad: name } });
-            
             const swatchHtml = `<i class="legend-swatch" style="background: ${style.fillColor};"></i>`;
 
             legendContent += `<div class="legend-item">
@@ -506,7 +836,7 @@ $(document).ready(function() {
 
     function handleAccordionToggle(event) {
         const header = $(event.currentTarget);
-        const content = header.next('.card-content-collapsible');
+        const content = header.next('.legend-accordion-content');
         const wasActive = header.hasClass('active');
 
         $('.legend-accordion-header').removeClass('active');
@@ -544,6 +874,20 @@ $(document).ready(function() {
             if (layerGroup) {
                 if (isChecked) habitatLayer.addLayer(layerGroup);
                 else habitatLayer.removeLayer(layerGroup);
+            }
+        } else if (type === 'management') {
+            managementVisibilityState[name] = isChecked;
+            const layerGroup = managementLayerGroups[name];
+            if (layerGroup && managementClusterGroup) {
+                if (isChecked) managementClusterGroup.addLayer(layerGroup);
+                else managementClusterGroup.removeLayer(layerGroup);
+            }
+        } else if (type === 'cameratrap') {
+            cameraTrapVisibilityState[name] = isChecked;
+            const layerGroup = cameraTrapLayerGroups[name];
+            if (layerGroup && cameraTrapClusterGroup) {
+                if (isChecked) cameraTrapClusterGroup.addLayer(layerGroup);
+                else cameraTrapClusterGroup.removeLayer(layerGroup);
             }
         }
     }
@@ -709,7 +1053,7 @@ $(document).ready(function() {
 
     function setLoadingState(isLoading) {
         $('.error-message').remove();
-        const mainCards = $('.card:visible').not('#unique-species-table .card, #annual-trends-container, #habitat-summary-container'); 
+        const mainCards = $('.card:visible').not('#unique-species-table .card, #annual-trends-container, #habitat-summary-container, #annual-habitat-trends-container'); 
         if (isLoading) {
             mainCards.append('<div class="loading-overlay"><span>Loading...</span></div>');
         } else {
@@ -814,7 +1158,6 @@ $(document).ready(function() {
                 return;
             }
 
-            // --- Build Table Header ---
             const headerRow1 = $('<tr>');
             headerRow1.append('<th rowspan="2" style="vertical-align: middle;">Habitat</th>');
             
@@ -829,7 +1172,6 @@ $(document).ready(function() {
             });
             thead.append(headerRow1, headerRow2);
 
-            // --- Build Table Body ---
             data.habitats.forEach(habitat => {
                 const row = $('<tr>');
                 row.append(`<td><b>${habitat.name}</b></td>`);
@@ -848,7 +1190,6 @@ $(document).ready(function() {
                 tbody.append(row);
             });
 
-            // --- Build Total Footer Row ---
             const totalRow = $('<tr style="font-weight: bold; background-color: var(--light-gray);">');
             totalRow.append('<td>Total</td>');
             data.years.forEach(year => {
@@ -865,10 +1206,121 @@ $(document).ready(function() {
             });
             tbody.append(totalRow);
 
+            habitatSummaryData = data;
+            initializeHabitatTrends();
+
         }).fail(() => {
             showErrorMessage('#habitat-summary-container', 'Could not load habitat summary data from the server.');
+            $('#annual-habitat-trends-container').hide();
         }).always(() => {
             container.find('.loading-overlay').remove();
+        });
+    }
+
+    function initializeHabitatTrends() {
+        if (!habitatSummaryData || !habitatSummaryData.habitats) {
+            $('#annual-habitat-trends-container').hide();
+            return;
+        }
+        $('#annual-habitat-trends-container').show();
+
+        const habitatSelect = $('#habitat-trend-habitat-select');
+        habitatSelect.empty();
+
+        habitatSelect.append(new Option('Total', 'Total'));
+
+        habitatSummaryData.habitats.forEach(habitat => {
+            habitatSelect.append(new Option(habitat.name, habitat.name));
+        });
+
+        habitatSelect.val('Total');
+        $('#habitat-trend-metric-select').val('areaha');
+
+        drawHabitatTrendChart();
+    }
+
+    function drawHabitatTrendChart(event) {
+        if (!habitatSummaryData) return;
+
+        if (event && $(event.currentTarget).is('button')) {
+            $('#annual-habitat-trends-container .btn-group button').removeClass('active');
+            $(event.currentTarget).addClass('active');
+        }
+
+        const selectedHabitat = $('#habitat-trend-habitat-select').val();
+        const selectedMetric = $('#habitat-trend-metric-select').val();
+        const selectedMetricText = $('#habitat-trend-metric-select option:selected').text();
+        const mode = $('#habitat-trend-standardized-btn').hasClass('active') ? 'standardized' : 'absolute';
+        const years = habitatSummaryData.years;
+
+        let sourceData;
+        if (selectedHabitat === 'Total') {
+            sourceData = habitatSummaryData.totals;
+        } else {
+            sourceData = habitatSummaryData.habitats.find(h => h.name === selectedHabitat)?.metrics;
+        }
+
+        if (!sourceData) {
+            showErrorMessage('#annual-habitat-trends-chart', 'Could not find data for the selected habitat.');
+            return;
+        }
+
+        const chartRawValues = years.map(year => sourceData[year] ? sourceData[year][selectedMetric] : 0);
+        const tableAreaHaValues = years.map(year => sourceData[year] ? sourceData[year]['areaha'] : 0);
+        const tableAreaPercentValues = years.map(year => sourceData[year] ? sourceData[year]['percent_area'] : 0);
+
+        let chartValues;
+        let layout;
+
+        if (mode === 'absolute') {
+            chartValues = chartRawValues;
+            layout = {
+                title: { text: `<b>${selectedHabitat} - ${selectedMetricText} (Absolute)</b>`, font: { size: 18 } },
+                yaxis: { title: selectedMetricText },
+                xaxis: { type: 'category', title: 'Year' },
+                margin: { t: 50, b: 40, l: 60, r: 20 }
+            };
+        } else {
+            const baseValue = chartRawValues[0];
+            chartValues = baseValue > 0 ? chartRawValues.map(d => (d / baseValue) * 100) : chartRawValues.map(() => 0);
+            layout = {
+                title: { text: `<b>${selectedHabitat} - ${selectedMetricText} Growth (First Year = 100)</b>`, font: { size: 18 } },
+                yaxis: { title: 'Growth Index', ticksuffix: '%' },
+                xaxis: { type: 'category', title: 'Year' },
+                margin: { t: 50, b: 40, l: 60, r: 20 }
+            };
+        }
+
+        const trace = [{ 
+            x: years, 
+            y: chartValues, 
+            type: 'bar',
+            hovertemplate: '<b>Year: %{x}</b><br>Value: %{y:.2f}<extra></extra>'
+        }];
+        Plotly.newPlot('annual-habitat-trends-chart', trace, plotlyConfig);
+
+        updateHabitatTrendTable(years, tableAreaHaValues, tableAreaPercentValues);
+    }
+
+    function updateHabitatTrendTable(years, areaHaValues, areaPercentValues) {
+        const table = $('#annual-habitat-trends-table');
+        const thead = table.find('thead').empty();
+        const tbody = table.find('tbody').empty();
+
+        thead.append(`<tr><th>Year</th><th>Area (ha)</th><th>Area (%)</th></tr>`);
+
+        years.forEach((year, index) => {
+            const areaHa = areaHaValues[index];
+            const areaPercent = areaPercentValues[index];
+            
+            const formattedAreaHa = Number.isInteger(areaHa) ? areaHa.toLocaleString() : areaHa.toFixed(2);
+            const formattedAreaPercent = Number.isInteger(areaPercent) ? areaPercent.toLocaleString() : areaPercent.toFixed(2);
+
+            tbody.append(`<tr>
+                <td><b>${year}</b></td>
+                <td style="text-align:right;">${formattedAreaHa}</td>
+                <td style="text-align:right;">${formattedAreaPercent}%</td>
+            </tr>`);
         });
     }
 
@@ -1000,7 +1452,7 @@ $(document).ready(function() {
                 tableBody.append(row);
             });
             
-            drawAnnualChart('absolute');
+            drawAnnualChart();
 
         }).fail(() => {
             showErrorMessage('#annual-trends-container', 'Could not load annual trends.');
@@ -1008,38 +1460,53 @@ $(document).ready(function() {
             container.find('.loading-overlay').remove();
         });
     }
-    function drawAnnualChart(mode) {
+    function drawAnnualChart(event) {
         if (annualData.length === 0) return;
 
+        if (event && $(event.currentTarget).is('button')) {
+            $('#annual-trends-container .btn-group button').removeClass('active');
+            $(event.currentTarget).addClass('active');
+        }
+
         const chartDiv = 'annual-trends-chart';
-        $('.toggle-buttons button').removeClass('active');
         
-        let years = annualData.map(d => d.year);
-        let values;
+        const selectedMetricKey = $('#annual-metric-select').val();
+        const selectedMetricText = $('#annual-metric-select option:selected').text();
+        const mode = $('#annual-standardized-btn').hasClass('active') ? 'standardized' : 'absolute';
+
+        const years = annualData.map(d => d.year);
+        const rawValues = annualData.map(d => d[selectedMetricKey]);
+        
+        let chartValues;
         let layout;
 
         if (mode === 'absolute') {
-            $('#annual-absolute-btn').addClass('active');
-            values = annualData.map(d => d.unique_species);
+            chartValues = rawValues;
             layout = {
-                title: 'Total Unique Species per Year',
-                yaxis: { title: 'Number of Unique Species' },
+                title: { text: `<b>${selectedMetricText} per Year (Absolute)</b>`, font: { size: 18 } },
+                yaxis: { title: 'Value' },
                 xaxis: { type: 'category', title: 'Year' },
                 margin: { t: 50, b: 40, l: 60, r: 20 }
             };
         } else { 
-            $('#annual-standardized-btn').addClass('active');
-            const baseValue = annualData[0].unique_species;
-            values = baseValue > 0 ? annualData.map(d => (d.unique_species / baseValue) * 100) : annualData.map(d => 0);
+            const baseValue = rawValues[0];
+            chartValues = baseValue > 0 ? rawValues.map(d => (d / baseValue) * 100) : rawValues.map(() => 0);
+            
             layout = {
-                title: `Species Growth Index (First Year = 100)`,
-                yaxis: { title: 'Growth Index (%)', tickformat: '.0f' },
+                title: { text: `<b>${selectedMetricText} Growth (First Year = 100)</b>`, font: { size: 18 } },
+                yaxis: { title: 'Growth Index', ticksuffix: '%' },
                 xaxis: { type: 'category', title: 'Year' },
                 margin: { t: 50, b: 40, l: 60, r: 20 }
             };
         }
 
-        const trace = [{ x: years, y: values, type: 'bar' }];
+        const trace = [{ 
+            x: years, 
+            y: chartValues, 
+            type: 'bar',
+            hovertemplate: '<b>Year: %{x}</b><br>Value: %{y:.3f}<extra></extra>'
+        }];
+
         Plotly.newPlot(chartDiv, trace, layout, plotlyConfig);
     }
     function loadUniqueSpeciesTable(page = 1) {
