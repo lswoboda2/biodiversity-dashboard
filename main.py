@@ -33,44 +33,42 @@ def read_root_head():
 
 DATA_PATH = Path(__file__).parent / "data"
 
-def load_data() -> pd.DataFrame:
-    """
-    Loads and concatenates all parquet files from the data directory on-demand.
-    This version is robust to missing columns in individual files.
-    """
-    parquet_files = list(DATA_PATH.glob("*.parquet"))
-    if not parquet_files:
-        raise HTTPException(status_code=500, detail="No parquet data files found on server.")
+_cached_df = None
 
-    try:
-        df_list = [pd.read_parquet(file) for file in parquet_files]
-        _df = pd.concat(df_list, ignore_index=True)
-
+def get_dataframe() -> pd.DataFrame:
+    global _cached_df
+    if _cached_df is None:
+        print("Cache is empty. Loading data from disk...")
+        parquet_files = list(DATA_PATH.glob("*.parquet"))
+        if not parquet_files:
+            raise HTTPException(status_code=500, detail="No parquet data files found on server.")
         
-        if "Taxa" in _df.columns:
-            _df = _df.rename(columns={"Taxa": "taxa"})
+        try:
+            df_list = [pd.read_parquet(file) for file in parquet_files]
+            _df = pd.concat(df_list, ignore_index=True)
 
-        if "Date" in _df.columns:
-            _df["Date"] = pd.to_datetime(_df["Date"])
-            _df["year"] = _df["Date"].dt.year
-            _df["month"] = _df["Date"].dt.month
-        
-        for col in ["english_name", "species", "obs", "taxa"]:
-            if col in _df.columns:
-                _df[col] = _df[col].astype("category")
-        
-        if 'count' in _df.columns:
-            _df['count'] = pd.to_numeric(_df['count'], errors='coerce')
-
-        if 'id' not in _df.columns:
-            _df.reset_index(inplace=True)
-            _df = _df.rename(columns={'index': 'id'})
-
-        return _df
-    except Exception as e:
-        print(f"Error loading data: {e}", file=sys.stderr)
-        raise HTTPException(status_code=500, detail="Could not load or process data files.")
-
+            if "Taxa" in _df.columns:
+                _df = _df.rename(columns={"Taxa": "taxa"})
+            if "Date" in _df.columns:
+                _df["Date"] = pd.to_datetime(_df["Date"])
+                _df["year"] = _df["Date"].dt.year
+                _df["month"] = _df["Date"].dt.month
+            for col in ["english_name", "species", "obs", "taxa"]:
+                if col in _df.columns:
+                    _df[col] = _df[col].astype("category")
+            if 'count' in _df.columns:
+                _df['count'] = pd.to_numeric(_df['count'], errors='coerce')
+            if 'id' not in _df.columns:
+                _df.reset_index(inplace=True)
+                _df = _df.rename(columns={'index': 'id'})
+            
+            _cached_df = _df
+            print("Data loaded and cached successfully.")
+        except Exception as e:
+            print(f"Error loading data: {e}", file=sys.stderr)
+            raise HTTPException(status_code=500, detail="Could not load or process data files.")
+    
+    return _cached_df
 
 def apply_filters(
     query_df: pd.DataFrame,
@@ -132,10 +130,7 @@ def get_management_years():
 def get_management_points(year: str):
     management_file = DATA_PATH / f"management_{year}.geojson"
     if not management_file.is_file():
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Management data for year {year} not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Management data for year {year} not found.")
     with open(management_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
@@ -154,10 +149,7 @@ def get_cameratrap_years():
 def get_cameratrap_points(year: str):
     cameratrap_file = DATA_PATH / f"cameratraps_{year}.geojson"
     if not cameratrap_file.is_file():
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Camera trap data for year {year} not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Camera trap data for year {year} not found.")
     with open(cameratrap_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
@@ -166,10 +158,7 @@ def get_cameratrap_points(year: str):
 def get_habitat_polygons(year: Optional[str] = "2024-25"):
     habitat_file = DATA_PATH / f"habitats_{year}.geojson"
     if not habitat_file.is_file():
-        raise HTTPException(
-            status_code=404, 
-            detail=f"Habitat data for year {year} not found."
-        )
+        raise HTTPException(status_code=404, detail=f"Habitat data for year {year} not found.")
     with open(habitat_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
@@ -178,25 +167,19 @@ def get_habitat_polygons(year: Optional[str] = "2024-25"):
 def get_habitat_summary():
     summary_file = DATA_PATH / "habitat_summary.json"
     if not summary_file.is_file():
-        raise HTTPException(
-            status_code=404, 
-            detail="Habitat summary file not found."
-        )
+        raise HTTPException(status_code=404, detail="Habitat summary file not found.")
     with open(summary_file, 'r') as f:
         data = json.load(f)
     return JSONResponse(content=data)
 
-
 @app.get("/api/all_unique_species")
 def get_all_unique_species(page: int = 1, page_size: int = 10):
-    df = load_data()
+    df = get_dataframe()
     all_unique_species = sorted(df['species'].dropna().unique().tolist())
-    
     total_species = len(all_unique_species)
     start_index = (page - 1) * page_size
     end_index = start_index + page_size
     paginated_species = all_unique_species[start_index:end_index]
-
     return {
         "species_list": paginated_species,
         "total_records": total_species,
@@ -213,8 +196,7 @@ def get_filter_options(
     year: Optional[str] = None,
     month: Optional[str] = None,
 ):
-    base_df = load_data()
-
+    base_df = get_dataframe()
     options = {}
     temp_df = apply_filters(base_df, species=species, obs=obs, taxa=taxa, year=year, month=month)
     options["english_name"] = _get_options(temp_df, "english_name")
@@ -242,7 +224,7 @@ def get_records(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     total_records = len(query_df)
@@ -273,7 +255,7 @@ def get_record_page(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     try:
@@ -294,7 +276,7 @@ def get_map_data(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     map_df = query_df.dropna(subset=['latitude', 'longitude']).copy()
     map_df = map_df[['id', 'english_name', 'species', 'obs', 'Date', 'taxa', 'latitude', 'longitude']]
@@ -316,7 +298,7 @@ def get_diversity_summary(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     
     if query_df.empty:
@@ -347,7 +329,7 @@ def get_diversity_summary(
 
 @app.get("/api/summary/annual_trends")
 def get_annual_trends():
-    df = load_data()
+    df = get_dataframe()
     if 'year' not in df.columns or df['year'].isnull().all():
         return {"trends": []}
 
@@ -391,7 +373,7 @@ def get_species_distribution(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return []
@@ -418,7 +400,7 @@ def get_temporal_trends(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
     if query_df.empty:
         return {}
@@ -437,7 +419,7 @@ def get_observer_comparison(
 ):
     if not obs:
         return {}
-    df = load_data()
+    df = get_dataframe()
     query_df = apply_filters(df, english_name, species, taxa=taxa, year=year, month=month, bbox=bbox)
     query_df = query_df[query_df["obs"].isin(obs.split(","))]
     if query_df.empty:
@@ -455,7 +437,7 @@ def get_observer_stats(
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ):
-    df = load_data()
+    df = get_dataframe()
     query_df = apply_filters(df, english_name, species, None, taxa, year, month, bbox)
     observer_df = query_df[query_df["obs"] == observer_name]
     if observer_df.empty:
