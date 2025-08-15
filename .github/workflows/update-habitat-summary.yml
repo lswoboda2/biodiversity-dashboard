@@ -1,0 +1,64 @@
+name: Update Habitat Summary JSON from Google Drive
+
+on:
+  repository_dispatch:
+    types: [new-habitat-summary-files]
+
+jobs:
+  build-and-commit-summary:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GDAL and other dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin libgdal-dev
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade pip
+          pip install geopandas pandas
+          pip install -r requirements.txt
+      
+      - name: Install Google API Python Client
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Authenticate to Google Drive
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+
+      - name: Download .zip file from Google Drive
+        run: python download_from_gdrive.py "${{ github.event.client_payload.file_id }}" "habitat-summary-input.zip"
+      
+      - name: Create source directory and unzip files
+        run: |
+          mkdir -p source_data
+          unzip habitat-summary-input.zip -d source_data/
+      
+      - name: Run habitat summary processing script
+        run: |
+          python habitatsummaryprocessing.py \
+            "source_data/Habitat_Polygons University all years.gpkg" \
+            "source_data/10m square habitats.gpkg" \
+            "data/habitat_summary.json"
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/habitat_summary.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Feat: Update habitat summary JSON data"
+            git push
+          fi
