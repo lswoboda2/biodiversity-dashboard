@@ -1,0 +1,55 @@
+name: Update Camera Traps GeoJSON from Google Drive
+
+on:
+  repository_dispatch:
+    types: [new-cameratraps-gpkg-file]
+
+jobs:
+  build-and-commit-cameratraps:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GDAL and other dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin libgdal-dev
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade pip
+          pip install geopandas
+          pip install -r requirements.txt
+      
+      - name: Install Google API Python Client
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Authenticate to Google Drive
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+
+      - name: Download .gpkg file from Google Drive
+        run: python download_from_gdrive.py "${{ github.event.client_payload.file_id }}" "input-cameratraps.gpkg"
+      
+      - name: Run camera traps conversion script
+        run: python cameratrapsgpkgconversion.py input-cameratraps.gpkg data/cameratraps_2024-25.geojson
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/cameratraps_2024-25.geojson
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Feat: Update camera traps GeoJSON data"
+            git push
+          fi
