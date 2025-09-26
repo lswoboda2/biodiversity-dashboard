@@ -1,0 +1,60 @@
+name: Update BigData Parquet from Google Drive
+
+on:
+  repository_dispatch:
+    types: [new-bigdata-gpkg-file]
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install GDAL and other dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gdal-bin libgdal-dev
+
+      - name: Install Python packages
+        run: |
+          pip install --upgrade pip
+          pip install --upgrade "gdown>=4.7.0"
+          pip install -r requirements.txt
+
+      - name: Install Google API Python Client
+        run: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib
+
+      - name: Authenticate to Google Drive
+        run: echo '${{ secrets.GDRIVE_CREDENTIALS_DATA }}' > gdrive-credentials.json
+
+      - name: Download .gpkg file from Google Drive (service account)
+        run: python download_from_gdrive.py "${{ github.event.client_payload.file_id }}" "bigdata.gpkg"
+
+      - name: Run data conversion script
+        # --- THIS IS THE CHANGE ---
+        # It now calls your new script.
+        run: python gpkg_to_bigdata.py bigdata.gpkg
+        # --- END CHANGE ---
+
+      - name: Commit and push if there are changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/bigdata.parquet
+          git add species_api_cache.csv
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "Chore: Update BigData Parquet data and API cache"
+            git push
+          fi
