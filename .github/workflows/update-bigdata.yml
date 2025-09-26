@@ -40,10 +40,7 @@ jobs:
         run: python download_from_gdrive.py "${{ github.event.client_payload.file_id }}" "bigdata.gpkg"
 
       - name: Run data conversion script
-        # --- THIS IS THE CHANGE ---
-        # It now calls your new script.
-        run: python gpkg_to_bigdata.py bigdata.gpkg
-        # --- END CHANGE ---
+        run: python gpkgtobigdata.py bigdata.gpkg
 
       - name: Commit and push if there are changes
         run: |
