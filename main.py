@@ -50,14 +50,11 @@ def get_dataframe() -> pd.DataFrame:
             if "Taxa" in _df.columns:
                 _df = _df.rename(columns={"Taxa": "taxa"})
             
-            # MODIFICATION 1: This block no longer creates or overwrites the 'year' column.
-            # It now only handles the Date and month columns.
             if "Date" in _df.columns:
                 _df["Date"] = pd.to_datetime(_df["Date"])
                 _df["month"] = _df["Date"].dt.month
             
-            # This ensures your existing 'year' column from the Parquet file is used
-            # and is treated as a category for better performance.
+            
             if "year" in _df.columns:
                 _df["year"] = _df["year"].astype("category")
 
@@ -84,7 +81,7 @@ def apply_filters(
     species: Optional[str] = None,
     obs: Optional[str] = None,
     taxa: Optional[str] = None,
-    year: Optional[str] = None, # Changed type hint to Optional[str] for clarity
+    year: Optional[str] = None, 
     month: Optional[int] = None,
     bbox: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -97,7 +94,6 @@ def apply_filters(
     if taxa:
         query_df = query_df[query_df["taxa"].isin(taxa.split(","))]
     
-    # MODIFICATION 2: Changed to a string comparison instead of converting to an integer.
     if year:
         query_df = query_df[query_df["year"] == year]
 
@@ -345,7 +341,6 @@ def get_annual_trends():
         return {"trends": []}
 
     yearly_data = []
-    # This will now correctly group by the string values in the 'year' column (e.g., "2024-25")
     for year, group in sorted(df.groupby('year', observed=True), key=lambda x: x[0]):
         total_records = len(group)
         
@@ -366,7 +361,7 @@ def get_annual_trends():
             gini_simpson_index = 1 - (proportions**2).sum()
 
         yearly_data.append({
-            "year": year, # 'year' will now be a string like "2024-25"
+            "year": year, 
             "total_records": int(total_records),
             "unique_species": int(species_richness),
             "shannon": round(float(shannon_index), 3),
