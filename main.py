@@ -4,21 +4,22 @@ import pandas as pd
 import numpy as np
 import json
 import re
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.routing import APIRouter
 from typing import Optional, List
 from pathlib import Path
 from math import ceil, floor
 from scipy.stats import entropy
+import openpyxl
 
-app = FastAPI(title="Biodiversity Dashboard", version="1.0.0")
+app = FastAPI(title="Combined Biodiversity API", version="1.0.0")
 
 origins = [
     "https://biodiversitydashboard-ls.netlify.app",
+    "https://biodiversity-actionplan.netlify.app"
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -31,8 +32,9 @@ app.add_middleware(
 def read_root_head():
     return Response(status_code=200)
 
-DATA_PATH = Path(__file__).parent / "data"
+dashboard_router = APIRouter(prefix="/dashboard")
 
+DATA_PATH = Path(__file__).parent / "data"
 _cached_df = None
 
 def get_dataframe() -> pd.DataFrame:
@@ -42,22 +44,16 @@ def get_dataframe() -> pd.DataFrame:
         parquet_files = list(DATA_PATH.glob("*.parquet"))
         if not parquet_files:
             raise HTTPException(status_code=500, detail="No parquet data files found on server.")
-        
         try:
             df_list = [pd.read_parquet(file) for file in parquet_files]
             _df = pd.concat(df_list, ignore_index=True)
-
             if "Taxa" in _df.columns:
                 _df = _df.rename(columns={"Taxa": "taxa"})
-            
             if "Date" in _df.columns:
                 _df["Date"] = pd.to_datetime(_df["Date"])
                 _df["month"] = _df["Date"].dt.month
-            
-            
             if "year" in _df.columns:
                 _df["year"] = _df["year"].astype("category")
-
             for col in ["english_name", "species", "obs", "taxa"]:
                 if col in _df.columns:
                     _df[col] = _df[col].astype("category")
@@ -66,64 +62,50 @@ def get_dataframe() -> pd.DataFrame:
             if 'id' not in _df.columns:
                 _df.reset_index(inplace=True)
                 _df = _df.rename(columns={'index': 'id'})
-            
             _cached_df = _df
             print("Data loaded and cached successfully.")
         except Exception as e:
             print(f"Error loading data: {e}", file=sys.stderr)
             raise HTTPException(status_code=500, detail="Could not load or process data files.")
-    
     return _cached_df
 
-def apply_filters(
-    query_df: pd.DataFrame,
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None, 
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-) -> pd.DataFrame:
+def apply_filters(query_df: pd.DataFrame, english_name: Optional[str] = None, species: Optional[str] = None,
+                  obs: Optional[str] = None, taxa: Optional[str] = None, year: Optional[str] = None,
+                  month: Optional[int] = None, bbox: Optional[str] = None) -> pd.DataFrame:
+    df = query_df.copy()
     if english_name:
-        query_df = query_df[query_df["english_name"].isin(english_name.split(","))]
+        df = df[df["english_name"].isin(english_name.split(","))]
     if species:
-        query_df = query_df[query_df["species"].isin(species.split(","))]
+        df = df[df["species"].isin(species.split(","))]
     if obs:
-        query_df = query_df[query_df["obs"].isin(obs.split(","))]
+        df = df[df["obs"].isin(obs.split(","))]
     if taxa:
-        query_df = query_df[query_df["taxa"].isin(taxa.split(","))]
-    
+        df = df[df["taxa"].isin(taxa.split(","))]
     if year:
-        query_df = query_df[query_df["year"] == year]
-
+        df = df[df["year"] == year]
     if month:
-        query_df = query_df[query_df["month"] == int(month)]
+        df = df[df["month"] == int(month)]
     if bbox:
         try:
             xmin, ymin, xmax, ymax = map(float, bbox.split(','))
-            query_df = query_df[
-                (query_df['longitude'] >= xmin) &
-                (query_df['longitude'] <= xmax) &
-                (query_df['latitude'] >= ymin) &
-                (query_df['latitude'] <= ymax)
-            ]
+            df = df[(df['longitude'] >= xmin) & (df['longitude'] <= xmax) &
+                    (df['latitude'] >= ymin) & (df['latitude'] <= ymax)]
         except (ValueError, IndexError):
             pass
-    return query_df
+    return df
 
 def _get_options(df_source: pd.DataFrame, key_name: str):
     return sorted(df_source[key_name].dropna().unique().tolist())
 
-@app.get("/")
+@dashboard_router.get("/")
 def root():
-    return {"status": "ok", "message": "Biodiversity Dashboard API root"}
+    return {"status": "ok"}
 
-@app.get("/health")
+@dashboard_router.get("/health")
 def health():
     return {"ok": True}
 
-@app.get("/api/management_years")
+@dashboard_router.get("/api/management_years")
 def get_management_years():
     years = []
     pattern = re.compile(r"management_(\d{4}-\d{2})\.geojson")
@@ -133,333 +115,215 @@ def get_management_years():
             years.append(match.group(1))
     return sorted(years, reverse=True)
 
-@app.get("/api/management_points")
-def get_management_points(year: str):
-    management_file = DATA_PATH / f"management_{year}.geojson"
-    if not management_file.is_file():
-        raise HTTPException(status_code=404, detail=f"Management data for year {year} not found.")
-    with open(management_file, 'r') as f:
-        data = json.load(f)
-    return JSONResponse(content=data)
-
-@app.get("/api/cameratrap_years")
+@dashboard_router.get("/api/cameratrap_years")
 def get_cameratrap_years():
     years = []
-    pattern = re.compile(r"cameratraps_(\d{4}-\d{2})\.geojson")
-    for f in DATA_PATH.glob("cameratraps_*.geojson"):
+    pattern = re.compile(r"cameratrap_(\d{4})\.geojson")
+    for f in DATA_PATH.glob("cameratrap_*.geojson"):
         match = pattern.match(f.name)
         if match:
             years.append(match.group(1))
-    return sorted(years, reverse=True)
+    return sorted(set(years), reverse=True)
 
-@app.get("/api/cameratrap_points")
-def get_cameratrap_points(year: str):
-    cameratrap_file = DATA_PATH / f"cameratraps_{year}.geojson"
-    if not cameratrap_file.is_file():
-        raise HTTPException(status_code=404, detail=f"Camera trap data for year {year} not found.")
-    with open(cameratrap_file, 'r') as f:
-        data = json.load(f)
-    return JSONResponse(content=data)
-
-@app.get("/api/habitat_polygons")
-def get_habitat_polygons(year: Optional[str] = "2024-25"):
-    habitat_file = DATA_PATH / f"habitats_{year}.geojson"
-    if not habitat_file.is_file():
-        raise HTTPException(status_code=404, detail=f"Habitat data for year {year} not found.")
-    with open(habitat_file, 'r') as f:
-        data = json.load(f)
-    return JSONResponse(content=data)
-
-@app.get("/api/summary/habitat")
-def get_habitat_summary():
-    summary_file = DATA_PATH / "habitat_summary.json"
-    if not summary_file.is_file():
-        raise HTTPException(status_code=404, detail="Habitat summary file not found.")
-    with open(summary_file, 'r') as f:
-        data = json.load(f)
-    return JSONResponse(content=data)
-
-@app.get("/api/all_unique_species")
-def get_all_unique_species(page: int = 1, page_size: int = 10):
+@dashboard_router.get("/api/filter-options")
+def get_filter_options():
     df = get_dataframe()
-    all_unique_species = sorted(df['species'].dropna().unique().tolist())
-    total_species = len(all_unique_species)
-    start_index = (page - 1) * page_size
-    end_index = start_index + page_size
-    paginated_species = all_unique_species[start_index:end_index]
+    opts = {
+        "english_name": _get_options(df, "english_name"),
+        "species": _get_options(df, "species"),
+        "obs": _get_options(df, "obs"),
+        "taxa": _get_options(df, "taxa"),
+        "year": sorted(df["year"].dropna().unique().tolist()) if "year" in df.columns else [],
+        "month": list(range(1, 13))
+    }
+    return opts
+
+@dashboard_router.get("/api/records")
+def get_records(english_name: Optional[str] = None, species: Optional[str] = None, obs: Optional[str] = None,
+                taxa: Optional[str] = None, year: Optional[str] = None, month: Optional[int] = None,
+                bbox: Optional[str] = None, page: int = 1, page_size: int = 100):
+    df = get_dataframe()
+    filtered = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
+    total = len(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    page_data = filtered.iloc[start:end].dropna(subset=["latitude", "longitude"]).to_dict("records")
     return {
-        "species_list": paginated_species,
-        "total_records": total_species,
+        "records": page_data,
+        "total": total,
         "page": page,
-        "total_pages": ceil(total_species / page_size)
+        "page_size": page_size
     }
 
-@app.get("/api/filter-options")
-def get_filter_options(
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[str] = None,
-):
-    base_df = get_dataframe()
-    options = {}
-    temp_df = apply_filters(base_df, species=species, obs=obs, taxa=taxa, year=year, month=month)
-    options["english_name"] = _get_options(temp_df, "english_name")
-    temp_df = apply_filters(base_df, english_name=english_name, obs=obs, taxa=taxa, year=year, month=month)
-    options["species"] = _get_options(temp_df, "species")
-    temp_df = apply_filters(base_df, english_name=english_name, species=species, taxa=taxa, year=year, month=month)
-    options["obs"] = _get_options(temp_df, "obs")
-    temp_df = apply_filters(base_df, english_name=english_name, species=species, obs=obs, year=year, month=month)
-    options["taxa"] = _get_options(temp_df, "taxa")
-    temp_df = apply_filters(base_df, english_name=english_name, species=species, obs=obs, taxa=taxa, month=month)
-    options["year"] = _get_options(temp_df, "year")
-    temp_df = apply_filters(base_df, english_name=english_name, species=species, obs=obs, taxa=taxa, year=year)
-    options["month"] = _get_options(temp_df, "month")
-    return options
-
-@app.get("/api/records")
-def get_records(
-    page: int = 1,
-    page_size: int = 100,
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
-    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    total_records = len(query_df)
-    paginated_data = query_df.iloc[(page - 1) * page_size : page * page_size].copy()
-    paginated_data = (
-        paginated_data.replace([np.inf, -np.inf], None)
-        .astype(object)
-        .where(pd.notnull(paginated_data), None)
-    )
-    return jsonable_encoder(
-        {
-            "total_records": total_records,
-            "page": page,
-            "total_pages": int(np.ceil(total_records / page_size)),
-            "records": paginated_data.to_dict(orient="records"),
-        }
-    )
-
-@app.get("/api/record_page")
-def get_record_page(
-    record_id: int,
-    page_size: int = 100,
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    df.sort_values(by=['Date', 'species', 'id'], ascending=[True, True, True], inplace=True)
-    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    try:
-        sorted_ids = query_df['id'].tolist()
-        position = sorted_ids.index(record_id)
-        page = floor(position / page_size) + 1
-        return {"page": page}
-    except (ValueError, IndexError):
-        raise HTTPException(status_code=404, detail="Record not found in the current filter context.")
-
-@app.get("/api/map_data")
-def get_map_data(
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    map_df = query_df.dropna(subset=['latitude', 'longitude']).copy()
-    map_df = map_df[['id', 'english_name', 'species', 'obs', 'Date', 'taxa', 'latitude', 'longitude']]
-    map_df = (
-        map_df.replace([np.inf, -np.inf], None)
-        .astype(object)
-        .where(pd.notnull(map_df), None)
-    )
-    records = map_df.to_dict(orient="records")
-    return JSONResponse(content=jsonable_encoder(records))
-
-@app.get("/api/summary/diversity")
-def get_diversity_summary(
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    
-    if query_df.empty:
-        return {"shannon": 0, "simpson": 0, "species_richness": 0, "total_records": 0}
-
-    use_count_column = "count" in query_df.columns and query_df["count"].notna().sum() > (len(query_df) / 2)
-
-    if use_count_column:
-        species_counts = query_df.groupby("species", observed=True)["count"].sum()
-    else:
-        species_counts = query_df.groupby("species", observed=True).size()
-
-    species_richness = len(species_counts)
-    shannon_index = 0
-    gini_simpson_index = 0
-
-    if not species_counts.empty and species_counts.sum() > 0 and species_richness > 1:
-        proportions = species_counts[species_counts > 0] / species_counts.sum()
-        shannon_index = entropy(proportions, base=np.e)
-        gini_simpson_index = 1 - (proportions**2).sum()
-
-    return {
-        "shannon": round(float(shannon_index), 3),
-        "simpson": round(float(gini_simpson_index), 3),
-        "species_richness": int(species_richness),
-        "total_records": len(query_df)
-    }
-
-@app.get("/api/summary/annual_trends")
-def get_annual_trends():
-    df = get_dataframe()
-    if 'year' not in df.columns or df['year'].isnull().all():
-        return {"trends": []}
-
-    yearly_data = []
-    for year, group in sorted(df.groupby('year', observed=True), key=lambda x: x[0]):
-        total_records = len(group)
-        
-        use_count_column = "count" in group.columns and group["count"].notna().sum() > (len(group) / 2)
-
-        if use_count_column:
-            species_counts = group.groupby("species", observed=True)["count"].sum()
-        else:
-            species_counts = group.groupby("species", observed=True).size()
-
-        species_richness = len(species_counts)
-        shannon_index = 0
-        gini_simpson_index = 0
-
-        if not species_counts.empty and species_counts.sum() > 0 and species_richness > 1:
-            proportions = species_counts[species_counts > 0] / species_counts.sum()
-            shannon_index = entropy(proportions, base=np.e)
-            gini_simpson_index = 1 - (proportions**2).sum()
-
-        yearly_data.append({
-            "year": year, 
-            "total_records": int(total_records),
-            "unique_species": int(species_richness),
-            "shannon": round(float(shannon_index), 3),
-            "simpson": round(float(gini_simpson_index), 3),
-        })
-    
-    return {"trends": yearly_data}
-
-@app.get("/api/summary/species_distribution")
-def get_species_distribution(
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    if query_df.empty:
+@dashboard_router.get("/api/management_points")
+def get_management_points(year: Optional[str] = None):
+    if not year:
         return []
-    species_counts = query_df['english_name'].value_counts()
-    top_20_names = species_counts.nlargest(20).index.tolist()
-    top_20_df = query_df[query_df['english_name'].isin(top_20_names)]
-    taxa_map = top_20_df.groupby('english_name', observed=True)['taxa'].first()
-    result = []
-    for name in top_20_names:
-        result.append({
-            "name": name,
-            "count": int(species_counts[name]),
-            "taxa": taxa_map.get(name, "Unknown")
-        })
-    return result
+    file_path = DATA_PATH / f"management_{year}.geojson"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Management data not found for year")
+    with open(file_path) as f:
+        data = json.load(f)
+    return {"features": data.get("features", [])}
 
-@app.get("/api/summary/temporal_trends")
-def get_temporal_trends(
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    query_df = apply_filters(df, english_name, species, obs, taxa, year, month, bbox)
-    if query_df.empty:
-        return {}
-    summary = query_df.groupby("month").size().reindex(range(1, 13), fill_value=0)
-    return summary.to_dict()
+@dashboard_router.get("/api/cameratrap")
+def get_cameratrap(year: Optional[str] = None):
+    if not year:
+        return []
+    file_path = DATA_PATH / f"cameratrap_{year}.geojson"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Camera trap data not found for year")
+    with open(file_path) as f:
+        data = json.load(f)
+    return {"features": data.get("features", [])}
 
-@app.get("/api/summary/observer_comparison")
-def get_observer_comparison(
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    obs: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    if not obs:
-        return {}
+@dashboard_router.get("/api/heatmap")
+def get_heatmap(taxa: Optional[str] = None, year: Optional[str] = None):
     df = get_dataframe()
-    query_df = apply_filters(df, english_name, species, taxa=taxa, year=year, month=month, bbox=bbox)
-    query_df = query_df[query_df["obs"].isin(obs.split(","))]
-    if query_df.empty:
-        return {}
-    comparison = query_df.groupby(["obs", "taxa"], observed=True).size().unstack(fill_value=0)
-    return comparison.to_dict(orient="dict")
+    filtered = df
+    if taxa:
+        filtered = filtered[filtered["taxa"] == taxa]
+    if year:
+        filtered = filtered[filtered["year"] == year]
+    heat_data = filtered.groupby(["latitude", "longitude"]).size().reset_index(name="count").to_dict("records")
+    return {"heatmap_data": heat_data}
 
-@app.get("/api/summary/observer/{observer_name}")
-def get_observer_stats(
-    observer_name: str,
-    english_name: Optional[str] = None,
-    species: Optional[str] = None,
-    taxa: Optional[str] = None,
-    year: Optional[str] = None,
-    month: Optional[int] = None,
-    bbox: Optional[str] = None,
-):
-    df = get_dataframe()
-    query_df = apply_filters(df, english_name, species, None, taxa, year, month, bbox)
-    observer_df = query_df[query_df["obs"] == observer_name]
-    if observer_df.empty:
-        return {}
-    specialization = observer_df.groupby('taxa', observed=True).size().sort_values(ascending=False)
-    other_breakdown = {}
-    if len(specialization) > 20:
-        top_20 = specialization.head(20)
-        other_taxa = specialization.tail(-20)
-        other_sum = other_taxa.sum()
-        if other_sum > 0:
-            other_breakdown = other_taxa.to_dict()
-            other_series = pd.Series([other_sum], index=['Other'])
-            specialization = pd.concat([top_20, other_series])
-    return {
-        "specialization": specialization.to_dict(),
-        "other_breakdown": other_breakdown
+actionplan_router = APIRouter(prefix="/actionplan")
+
+DATA_XLSX = Path(__file__).parent / "data" / "source.xlsx"
+_cached_ap_df = None
+_cached_mtime = None
+
+SPECIES_COLUMNS = [
+    "all", "invertebrate", "bat", "mammal", "bird", "amphibians",
+    "reptiles", "invasive", "plants", "freshwater", "coastal"
+]
+
+def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = [str(col).strip() for col in df.columns]
+    df = df.rename(columns={
+        "Priority 2025 (3 high, 1 low)": "priority_2025",
+        "Lead Contact (provisional)": "lead_contact",
+        "Implementation ranking": "implementation_ranking",
+    })
+    if "priority_2025" in df.columns:
+        df["priority_2025"] = pd.to_numeric(df["priority_2025"], errors="coerce")
+    return df
+
+def _load_dataframe_from_disk() -> pd.DataFrame:
+    if not DATA_XLSX.exists():
+        raise HTTPException(status_code=500, detail=f"Data file not found: {DATA_XLSX.name}")
+    df = pd.read_excel(DATA_XLSX, engine="openpyxl", skiprows=1)
+    df = clean_column_names(df)
+    if "Action" in df.columns:
+        df = df.dropna(subset=["Action"])
+    if "Status" in df.columns:
+        df["Status"] = df["Status"].astype(str).str.strip().str.lower().str.capitalize()
+    def get_affected_species(row):
+        return [col for col in SPECIES_COLUMNS if row.get(col) == 1]
+    df["affected_species"] = df.apply(get_affected_species, axis=1)
+    return df
+
+def get_ap_dataframe() -> pd.DataFrame:
+    global _cached_ap_df, _cached_mtime
+    try:
+        mtime = DATA_XLSX.stat().st_mtime
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail=f"Data file not found: {DATA_XLSX.name}")
+    if _cached_ap_df is None or _cached_mtime != mtime:
+        _cached_ap_df = _load_dataframe_from_disk()
+        _cached_mtime = mtime
+    return _cached_ap_df
+
+def apply_ap_filters(df: pd.DataFrame, status: Optional[str] = None, strategy: Optional[str] = None,
+                     timescale: Optional[str] = None, implementation: Optional[str] = None,
+                     impact: Optional[str] = None, priority: Optional[str] = None, species: Optional[str] = None) -> pd.DataFrame:
+    q = df.copy()
+    if status:
+        q = q[q["Status"] == status]
+    if strategy:
+        q = q[q["Strategy 2025"] == strategy]
+    if timescale:
+        q = q[q["Timescale"] == timescale]
+    if implementation:
+        q = q[q["implementation_ranking"] == implementation]
+    if impact:
+        q = q[q["Impact"] == impact]
+    if priority:
+        try:
+            q = q[q["priority_2025"] == float(priority)]
+        except (ValueError, TypeError):
+            pass
+    if species:
+        selected = [s.strip() for s in species.split(",") if s.strip()]
+        if selected:
+            q = q[q["affected_species"].apply(lambda lst: any(s in lst for s in selected))]
+    return q
+
+def get_summary_stats(df: pd.DataFrame) -> dict:
+    total = len(df)
+    counts = df["Status"].value_counts().to_dict() if "Status" in df.columns else {}
+    for k in ["Achieved and ongoing", "Underway", "Not started"]:
+        counts.setdefault(k, 0)
+    pct = {k: round((v / total) * 100, 1) if total else 0 for k, v in counts.items()}
+    return {"total_actions": total, "status_counts": counts, "status_percentages": pct}
+
+@actionplan_router.get("/")
+def read_root():
+    return {"message": "Biodiversity Action Plan API"}
+
+@actionplan_router.get("/health")
+def health():
+    return {"ok": True}
+
+@actionplan_router.get("/api/filter-options")
+def get_filter_options():
+    df = get_ap_dataframe()
+    opt = {
+        "status": sorted(df["Status"].dropna().unique().tolist()) if "Status" in df.columns else [],
+        "strategy": sorted(df["Strategy 2025"].dropna().unique().tolist()) if "Strategy 2025" in df.columns else [],
+        "timescale": sorted(df["Timescale"].dropna().unique().tolist()) if "Timescale" in df.columns else [],
+        "implementation": sorted(df["implementation_ranking"].dropna().unique().tolist()) if "implementation_ranking" in df.columns else [],
+        "impact": sorted(df["Impact"].dropna().unique().tolist()) if "Impact" in df.columns else [],
+        "priority": sorted([str(int(p)) for p in df["priority_2025"].dropna().unique()]) if "priority_2025" in df.columns else [],
+        "species": SPECIES_COLUMNS,
     }
+    return opt
+
+@actionplan_router.get("/api/actions")
+def get_actions(status: Optional[str] = None, strategy: Optional[str] = None, timescale: Optional[str] = None,
+                implementation: Optional[str] = None, impact: Optional[str] = None, priority: Optional[str] = None,
+                species: Optional[str] = None, page: int = 1, page_size: int = 10):
+    df = get_ap_dataframe()
+    filtered = apply_ap_filters(df, status, strategy, timescale, implementation, impact, priority, species)
+    stats = get_summary_stats(filtered)
+    total_records = len(filtered)
+    total_pages = ceil(total_records / page_size) if page_size > 0 else 1
+    start = max(0, (page - 1) * page_size)
+    end = start + page_size
+    page_df = filtered.iloc[start:end] if page_size > 0 else filtered
+    out_df = page_df.drop(columns=SPECIES_COLUMNS, errors="ignore")
+    cleaned = out_df.astype(object).where(pd.notnull(out_df), None)
+    actions = cleaned.to_dict(orient="records")
+    return {
+        "summary_stats": stats,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_records": total_records,
+            "total_pages": total_pages,
+        },
+        "actions": actions,
+    }
+
+@actionplan_router.get("/api/summary-stats")
+def get_summary_stats_endpoint():
+    df = get_ap_dataframe()
+    return get_summary_stats(df)
+
+app.include_router(dashboard_router)
+app.include_router(actionplan_router)
+
+@app.get("/")
+def combined_root():
+    return {"status": "ok", "message": "Combined Biodiversity API"}
