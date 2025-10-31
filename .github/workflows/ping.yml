@@ -1,0 +1,25 @@
+name: Daily Ping for Sync
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  
+  workflow_dispatch:  
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Create ping file
+        run: |
+          echo "Ping at $(date)" > ping.txt  # Dummy file with timestamp
+
+      - name: Commit and push ping
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'Daily sync ping for action plan data'
+          file_pattern: ping.txt
