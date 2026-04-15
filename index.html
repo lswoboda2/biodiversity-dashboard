@@ -9,6 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -348,6 +349,7 @@ $(document).ready(function() {
     let habitatSummaryData = null;
     let map, drawnItems, highlightedMarker = null;
     let geographicFilter = null;
+    let currentMapData = [];
     
     let markerLayers = {}, taxaLayerGroups = {}, taxaColors = {}, taxaVisibilityState = {};
     let habitatLayer = null; 
@@ -427,7 +429,8 @@ $(document).ready(function() {
 
         const drawControl = new L.Control.Draw({
             draw: {
-                polygon: false, polyline: false, circle: false, marker: false, circlemarker: false,
+                polygon: { shapeOptions: { color: '#007bff' } },
+                polyline: false, circle: false, marker: false, circlemarker: false,
                 rectangle: { shapeOptions: { color: '#007bff' } }
             },
             edit: { featureGroup: drawnItems, remove: true }
@@ -436,15 +439,30 @@ $(document).ready(function() {
 
         map.on(L.Draw.Event.CREATED, function (e) {
             drawnItems.clearLayers();
-            drawnItems.addLayer(e.layer);
-            const bounds = e.layer.getBounds();
-            geographicFilter = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
-            updateAllDashboardComponents();
+            const layer = e.layer;
+            drawnItems.addLayer(layer);
+
+            if (e.layerType === 'rectangle') {
+                const bounds = layer.getBounds();
+                geographicFilter = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+                updateAllDashboardComponents();
+                return;
+            }
+
+            if (e.layerType === 'polygon') {
+                geographicFilter = null;
+                const summary = getPolygonSelectionSummary(layer);
+                showPolygonSummary(layer, summary);
+            }
         });
 
         map.on(L.Draw.Event.DELETED, function () {
+            const hadGeographicFilter = geographicFilter !== null;
             geographicFilter = null;
-            updateAllDashboardComponents();
+
+            if (hadGeographicFilter) {
+                updateAllDashboardComponents();
+            }
         });
 
         const legendContainer = L.control({position: 'bottomright'});
@@ -891,6 +909,54 @@ $(document).ready(function() {
         }
     }
 
+    function leafletLayerToTurfPolygon(layer) {
+        const latLngs = layer.getLatLngs()[0];
+        const ring = latLngs.map(latlng => [latlng.lng, latlng.lat]);
+
+        if (ring.length > 0) {
+            const first = ring[0];
+            const last = ring[ring.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) {
+                ring.push([...first]);
+            }
+        }
+
+        return turf.polygon([ring]);
+    }
+
+    function getPolygonSelectionSummary(layer) {
+        const polygon = leafletLayerToTurfPolygon(layer);
+
+        const pointsInPolygon = currentMapData.filter(point => {
+            if (point.latitude == null || point.longitude == null) return false;
+            const turfPoint = turf.point([point.longitude, point.latitude]);
+            return turf.booleanPointInPolygon(turfPoint, polygon);
+        });
+
+        const uniqueSpecies = new Set(
+            pointsInPolygon
+                .map(point => point.species)
+                .filter(Boolean)
+        );
+
+        return {
+            totalRecords: pointsInPolygon.length,
+            uniqueSpecies: uniqueSpecies.size,
+            pointsInPolygon
+        };
+    }
+
+    function showPolygonSummary(layer, summary) {
+        const popupContent = `
+            <div>
+                <b>Polygon Selection</b><br>
+                Unique species: ${summary.uniqueSpecies}<br>
+                Observation records: ${summary.totalRecords}
+            </div>
+        `;
+        layer.bindPopup(popupContent).openPopup();
+    }
+
     function updateMap(filters) {
         if (markerLayers.clusterGroup) {
             map.removeLayer(markerLayers.clusterGroup);
@@ -899,8 +965,10 @@ $(document).ready(function() {
         taxaLayerGroups = {};
 
         return $.get(`${API_BASE_URL}/api/map_data`, filters).done(data => {
+            currentMapData = data || [];
             const speciesLegendDiv = $('#species-legend');
             if (!data || data.length === 0) {
+                currentMapData = [];
                 speciesLegendDiv.html(`
                     <div class="legend-accordion-header active" data-target="#species-content">
                         <span>Species</span><span class="arrow">▼</span>
