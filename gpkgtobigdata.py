@@ -8,8 +8,6 @@ import os
 import sys
 import fiona
 
-from dashboard_standardisation import standardise_dashboard_gdf
-
 if len(sys.argv) > 1:
     INPUT_GPKG_PATH = sys.argv[1]
 else:
@@ -160,17 +158,18 @@ def main():
         print(f"ERROR: Could not read the GeoPackage file. Details: {e}")
         return
 
-    gdf = standardise_dashboard_gdf(gdf)
-
-    if 'Date' not in gdf.columns:
-        print("ERROR: The main data is missing a required date column.")
-        return
-
+    gdf['Date'] = pd.to_datetime(gdf['Date'], errors='coerce')
     original_rows = len(gdf)
     gdf.dropna(subset=['Date'], inplace=True)
     if not gdf.empty:
         gdf = gdf[gdf['Date'].dt.year != 1970].copy()
     print(f"Removed {original_rows - len(gdf)} rows with invalid dates.")
+
+    if 'geometry' in gdf.columns:
+        gdf['longitude'] = gdf.geometry.x
+        gdf['latitude'] = gdf.geometry.y
+        gdf = gdf.drop(columns='geometry')
+        print("Extracted longitude and latitude from geometry.")
 
     for col in gdf.select_dtypes(include=['object']).columns:
         if gdf[col].apply(lambda x: isinstance(x, bytes)).any():

@@ -8,8 +8,6 @@ import os
 import sys
 import fiona
 
-from dashboard_standardisation import standardise_dashboard_gdf
-
 
 FINAL_COLUMNS = [
     'TRUE..1', 'Date', 'species', 'Taxa', 'obs', 'height', 'radius',
@@ -131,11 +129,12 @@ def process_vip_data(input_gpkg, output_parquet, species_csv, api_cache_csv):
     gdf.rename(columns=rename_map, inplace=True)
     if 'english_name' in gdf.columns:
         gdf.drop(columns=['english_name'], inplace=True)
-    gdf = standardise_dashboard_gdf(gdf)
-    if 'Date' not in gdf.columns:
-        print("ERROR: The VIP data is missing a required date column.")
-        sys.exit(1)
+    gdf['Date'] = pd.to_datetime(gdf['Date'], errors='coerce')
     gdf.dropna(subset=['Date'], inplace=True)
+    if 'geometry' in gdf.columns:
+        gdf['longitude'] = gdf.geometry.x
+        gdf['latitude'] = gdf.geometry.y
+        gdf = gdf.drop(columns='geometry')
 
     print("\nAdding English Species Names via API lookup...")
     final_species_map = {}

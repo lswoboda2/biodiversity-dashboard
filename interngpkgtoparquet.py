@@ -8,8 +8,6 @@ import os
 import sys
 import fiona
 
-from dashboard_standardisation import standardise_dashboard_gdf
-
 FINAL_COLUMNS = [
     'TRUE..1', 'Date', 'species', 'Taxa', 'obs', 'height', 'radius',
     'photoid', 'count', 'year', 'month', 'day', 'comment', 'type',
@@ -127,11 +125,14 @@ def process_intern_data(input_gpkg, output_parquet, species_csv, api_cache_csv):
     gdf.drop(columns=[col for col in cols_to_drop if col in gdf.columns], inplace=True, errors='ignore')
     rename_map = {'Observer': 'obs', 'Count': 'count'}
     gdf.rename(columns=rename_map, inplace=True)
-    gdf = standardise_dashboard_gdf(gdf)
-    if 'Date' not in gdf.columns:
-        print("ERROR: The intern data is missing a required date column.")
-        sys.exit(1)
+    gdf['Date'] = pd.to_datetime(gdf['Date'], errors='coerce')
     gdf.dropna(subset=['Date'], inplace=True)
+    if gdf['Date'].dt.tz is not None:
+        gdf['Date'] = gdf['Date'].dt.tz_convert('UTC').dt.tz_localize(None)
+    if 'geometry' in gdf.columns:
+        gdf['longitude'] = gdf.geometry.x
+        gdf['latitude'] = gdf.geometry.y
+        gdf = gdf.drop(columns='geometry')
 
     print("\nLoading Species Name Lookups (Local & Cache)...")
     final_species_map = {}

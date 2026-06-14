@@ -4,8 +4,6 @@ import numpy as np
 import sys
 import os
 
-from dashboard_standardisation import standardise_date_series
-
 FINAL_COLUMNS = [
     'TRUE..1', 'Date', 'species', 'Taxa', 'obs', 'height', 'radius',
     'photoid', 'count', 'year', 'month', 'day', 'comment', 'type',
@@ -48,7 +46,7 @@ def convert_legacy_gpkg(input_gpkg, output_parquet, species_csv):
 
     print("\nStandardizing data and transforming schema...")
     
-    gdf['Date'] = standardise_date_series(gdf['Date'])
+    gdf['Date'] = pd.to_datetime(gdf['Date'], errors='coerce').astype('datetime64[ms]')
     print("Standardized 'Date' column to datetime64[ms].")
 
     rename_map = {
